@@ -1,0 +1,9 @@
+{
+  "id": "ukore_shot",
+  "name": "UkoreShot",
+  "version": "0.1.0",
+  "api_version": 1,
+  "entry_point": "plugin.py",
+  "description": "Per-repo video library of Maya playblasts (written by UkorePlayblast) with a built-in player and simple frame-by-frame grease-pencil drawing + text comments for review feedback.",
+  "requires": ["project_editor"]
+}
