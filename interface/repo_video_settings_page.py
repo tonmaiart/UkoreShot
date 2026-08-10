@@ -9,11 +9,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from ukoreshot_plugin.core import discord_client, discord_token_store, video_path_store
+from ukoreshot_plugin.core import discord_client, video_path_store
 
 
 class RepoVideoSettingsPage(QWidget):
@@ -47,35 +48,68 @@ class RepoVideoSettingsPage(QWidget):
         self.clear_button = QPushButton("Clear Choice")
         self.clear_button.clicked.connect(self._on_clear)
 
-        # Discord — Channel ID is per-repo, shared/git-tracked (not a
-        # secret, see core/discord_client.py). Bot Token is per-machine,
-        # saved via the OS keyring (core/discord_token_store.py) — never
-        # displayed back once saved, and never tied to which repo is
-        # active, so its widgets stay enabled regardless of repo selection.
+        # Discord — Channel ID and Bot Token are both per-repo and both
+        # shared/git-tracked (same "ukore_shot" PluginConfigStore,
+        # shared=True) as of 2026-08-08, so every machine picks up both
+        # automatically via git with no per-machine setup. Confirmed with
+        # the user this trades away the OS-keyring approach an earlier
+        # revision used: the token is committed to the studio repo in
+        # plain text and stays in git history forever, so repo access is
+        # effectively bot access — see discord_client.py's
+        # get_bot_token/set_bot_token docstring.
         self.discord_channel_edit = QLineEdit()
+        self.discord_channel_edit.setPlaceholderText("A Forum Channel's id, not a plain text channel")
         self.discord_channel_save_button = QPushButton("Save Channel ID")
         self.discord_channel_save_button.clicked.connect(self._on_save_discord_channel)
         self.discord_token_edit = QLineEdit()
         self.discord_token_edit.setEchoMode(QLineEdit.Password)
-        self.discord_token_edit.setPlaceholderText("Paste a new token to change it")
         self.discord_token_save_button = QPushButton("Save Bot Token")
         self.discord_token_save_button.clicked.connect(self._on_save_discord_token)
-        self.discord_token_status_label = QLabel("")
+
+        # Max Upload Size — per-repo, shared, same store as Channel ID/Bot
+        # Token above. discord_send_worker.py compresses a video down to
+        # fit under this via ffmpeg before uploading, only when it's
+        # actually over the limit (no transcode at all otherwise). Default
+        # matches Discord's own un-boosted cap — raise it if the studio's
+        # server is boosted enough to allow bigger uploads.
+        self.discord_max_upload_spin = QSpinBox()
+        self.discord_max_upload_spin.setRange(1, 500)
+        self.discord_max_upload_spin.setSuffix(" MB")
+        self.discord_max_upload_save_button = QPushButton("Save Max Upload Size")
+        self.discord_max_upload_save_button.clicked.connect(self._on_save_discord_max_upload)
+
+        # ffmpeg Path — per-machine (shared=False), unlike everything else
+        # in this group: it's a real local file path, not something that
+        # makes sense synced studio-wide (every machine's ffmpeg install,
+        # if any, lives wherever it lives). Blank means "look up ffmpeg on
+        # this machine's PATH" — see video_compress.py's resolve_ffmpeg_path.
+        self.discord_ffmpeg_edit = QLineEdit()
+        self.discord_ffmpeg_edit.setPlaceholderText("Blank = look up ffmpeg on this machine's PATH")
+        self.discord_ffmpeg_save_button = QPushButton("Save ffmpeg Path (this machine)")
+        self.discord_ffmpeg_save_button.clicked.connect(self._on_save_discord_ffmpeg_path)
 
         discord_note = QLabel(
-            "Channel ID applies to this repo and is shared with the whole studio. "
-            "Bot Token is saved only on this machine — every machine that should be able "
-            "to use Send to Discord needs the same token entered here once."
+            "Channel ID must be a Forum Channel — Send to Discord posts each video into the forum "
+            "post whose title matches the video's shot code (creating one if it doesn't exist yet), "
+            "not directly into the channel itself. A video over Max Upload Size is compressed with "
+            "ffmpeg before sending (requires ffmpeg installed on whichever machine clicks Send to "
+            "Discord). Channel ID, Bot Token, and Max Upload Size all apply to this repo and are "
+            "shared with the whole studio via git — anyone with access to this repo (now or in its "
+            "history) can see the Bot Token and use it, so only use a bot you're fine with the whole "
+            "studio effectively controlling."
         )
         discord_note.setWordWrap(True)
         discord_group = QGroupBox("Discord")
         discord_layout = QFormLayout(discord_group)
         discord_layout.addRow(discord_note)
-        discord_layout.addRow("Channel ID", self.discord_channel_edit)
+        discord_layout.addRow("Forum Channel ID", self.discord_channel_edit)
         discord_layout.addRow(self.discord_channel_save_button)
         discord_layout.addRow("Bot Token", self.discord_token_edit)
         discord_layout.addRow(self.discord_token_save_button)
-        discord_layout.addRow(self.discord_token_status_label)
+        discord_layout.addRow("Max Upload Size", self.discord_max_upload_spin)
+        discord_layout.addRow(self.discord_max_upload_save_button)
+        discord_layout.addRow("ffmpeg Path", self.discord_ffmpeg_edit)
+        discord_layout.addRow(self.discord_ffmpeg_save_button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.hint_label)
@@ -83,7 +117,11 @@ class RepoVideoSettingsPage(QWidget):
         layout.addWidget(self.clear_button)
         layout.addWidget(discord_group)
 
-        self._update_discord_token_status()
+        # ffmpeg Path is per-machine, not per-repo — load it once here
+        # rather than in refresh()/_refresh_discord_fields, which both
+        # only run against whatever repo is currently active.
+        self.discord_ffmpeg_edit.setText(discord_client.get_ffmpeg_path(self._api) or "")
+
         self.refresh()
 
     def refresh(self) -> None:
@@ -95,7 +133,7 @@ class RepoVideoSettingsPage(QWidget):
         self._project_id = project_id
         self._repo_id = repo_id
         self.list_widget.clear()
-        self._refresh_discord_channel()
+        self._refresh_discord_fields()
 
         if not project_id or not repo_id:
             self.hint_label.setText("Select a repo to see this information.")
@@ -147,15 +185,26 @@ class RepoVideoSettingsPage(QWidget):
         video_path_store.set_selected_custom_path_id(self._api, self._project_id, self._repo_id, None)
         self.list_widget.clearSelection()
 
-    def _refresh_discord_channel(self) -> None:
+    def _refresh_discord_fields(self) -> None:
         has_repo = self._project_id is not None and self._repo_id is not None
         self.discord_channel_edit.setEnabled(has_repo)
         self.discord_channel_save_button.setEnabled(has_repo)
+        self.discord_token_edit.setEnabled(has_repo)
+        self.discord_token_save_button.setEnabled(has_repo)
+        self.discord_max_upload_spin.setEnabled(has_repo)
+        self.discord_max_upload_save_button.setEnabled(has_repo)
         if has_repo:
             channel_id = discord_client.get_channel_id(self._api, self._project_id, self._repo_id)
             self.discord_channel_edit.setText(channel_id or "")
+            token = discord_client.get_bot_token(self._api, self._project_id, self._repo_id)
+            self.discord_token_edit.setText(token or "")
+            self.discord_max_upload_spin.setValue(
+                discord_client.get_max_upload_mb(self._api, self._project_id, self._repo_id)
+            )
         else:
             self.discord_channel_edit.clear()
+            self.discord_token_edit.clear()
+            self.discord_max_upload_spin.setValue(discord_client.DEFAULT_MAX_UPLOAD_MB)
 
     def _on_save_discord_channel(self) -> None:
         if self._project_id is None or self._repo_id is None:
@@ -165,20 +214,19 @@ class RepoVideoSettingsPage(QWidget):
         QMessageBox.information(self, "Discord", "Channel ID saved.")
 
     def _on_save_discord_token(self) -> None:
-        token = self.discord_token_edit.text().strip()
-        if not token:
+        if self._project_id is None or self._repo_id is None:
             return
-        try:
-            discord_token_store.save_token(token)
-        except discord_token_store.DiscordTokenStoreFallbackUsed as exc:
-            QMessageBox.warning(self, "Discord Bot Token", str(exc))
-        else:
-            QMessageBox.information(self, "Discord Bot Token", "Bot token saved on this machine.")
-        self.discord_token_edit.clear()
-        self._update_discord_token_status()
+        token = self.discord_token_edit.text().strip()
+        discord_client.set_bot_token(self._api, self._project_id, self._repo_id, token or None)
+        QMessageBox.information(self, "Discord", "Bot Token saved.")
 
-    def _update_discord_token_status(self) -> None:
-        has_token = discord_token_store.load_token() is not None
-        self.discord_token_status_label.setText(
-            "Bot token: saved on this machine." if has_token else "Bot token: not set on this machine."
-        )
+    def _on_save_discord_max_upload(self) -> None:
+        if self._project_id is None or self._repo_id is None:
+            return
+        discord_client.set_max_upload_mb(self._api, self._project_id, self._repo_id, self.discord_max_upload_spin.value())
+        QMessageBox.information(self, "Discord", "Max Upload Size saved.")
+
+    def _on_save_discord_ffmpeg_path(self) -> None:
+        ffmpeg_path = self.discord_ffmpeg_edit.text().strip()
+        discord_client.set_ffmpeg_path(self._api, ffmpeg_path or None)
+        QMessageBox.information(self, "Discord", "ffmpeg Path saved.")

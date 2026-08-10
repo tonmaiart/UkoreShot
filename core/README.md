@@ -6,16 +6,18 @@ session working on data/path/persistence concerns doesn't need to open any
 of `interface/`'s widget code (and vice versa) — see the top-level
 `../README.md`'s "Structure" section for the full rule.
 
-**Naming note:** `from core.X import Y` inside these files (e.g.
-`comment_store.py`'s `from core.store import LocalConfigStore`,
-`draw_overlay.py`'s `from core.extensibility import debug_log` in
-`../interface/`) always means the app's own **top-level** `core/` package
+**Naming note:** `video_path_store.py`'s `from core.exceptions import
+NotFoundError` always means the app's own **top-level** `core/` package
 (`C:\Tonmai\UkoreHub\core\`), never this folder — Python resolves
 `from core...` as an absolute import from the repo root on `sys.path`,
 completely independent of where the importing file itself lives. The two
 packages share a name by coincidence, not relationship; don't assume a
 bare `core.something` import anywhere in this plugin means
-`ukoreshot_plugin.core`.
+`ukoreshot_plugin.core`. (This folder used to have a second example,
+`comment_store.py`'s `from core.store import LocalConfigStore` — that
+file moved to `cache/plugins/BananaSketch/core/` 2026-08-08 along with the
+rest of the draw/comment editor, and its own README carries the same note
+forward.)
 
 ## Files
 
@@ -54,60 +56,68 @@ bare `core.something` import anywhere in this plugin means
   shot/version-subfoldered playblast, or any unrelated file — which
   `../interface/video_library_page.py`/`filter_sidebar.py` treat as
   "Unknown" rather than an error or something to hide.
-- `comment_store.py` — sidecar JSON persistence, one file per video:
-  `<video_path>.ukoreshot.json` next to the video itself (travels with the
-  shared library folder, no separate app data store). Shape:
-  `{"frames": {"<frame_index>": {"strokes": [{"color", "width", "points"}], "comments": [{"id", "author", "text", "timestamp"}], "text_boxes": [{"text", "x", "y"}]}}}`,
-  points/positions stored normalized 0-1 in widget space. `"comments"`
-  (added 2026-07-20) replaces the older single `"note"` string a frame
-  saved before that date may still have — `../interface/player_widget.py`'s
-  `PlayerWidget._migrate_comments` handles reading the old shape;
-  `comment_store.py` itself doesn't rewrite existing files, only future
-  saves. `current_username()` (also added 2026-07-20) is the shared
-  "who's commenting" lookup `../interface/comment_thread.py` calls for
-  every new comment: the cached `LocalConfigStore.github_username` if this
-  machine has logged in via GitHub, else `getpass.getuser()` — no live
-  network call, since a comment shouldn't block on one.
-  `list_commenters(video_path)` (also added 2026-07-20) is every distinct
-  comment author across a video's frames — `video_library_page.py` caches
-  this per video for `filter_sidebar.py`'s "Commented By" filter category;
-  a frame that only has the legacy `"note"` string contributes nothing (no
-  author was ever recorded for it). `_REPO_ROOT` is
-  `Path(__file__).resolve().parents[4]` — four parents up from
-  `core/comment_store.py` is the UkoreHub repo root (no `api` handle
-  available this deep to resolve it any other way).
-
 - `discord_client.py` — the Discord side of the "Send to Discord" button
   (`../interface/player_widget.py`'s `send_discord_button`,
-  `sendToDiscordRequested`). `get_channel_id`/`set_channel_id` read/write a
-  per-repo, studio-shared Discord channel id off the same `"ukore_shot"`
-  `PluginConfigStore` `video_path_store.py` already uses (a new
-  `discord_channel_id` key, `_repo_key`-namespaced the same way) — not a
-  secret, so it's fine in the shared/git-tracked store, unlike the bot
-  token below. `send_video(token, channel_id, video_path, message)` POSTs
-  the video as a file attachment to Discord's bot REST API
-  (`/channels/{id}/messages`), hand-building the multipart/form-data body
-  via stdlib `urllib` (same "no `requests` dependency" convention
-  `core/github/commits_api.py` already uses) since this app has no
-  multipart helper. Raises `DiscordApiError` with an already
-  user-safe message for every failure mode (bad token, missing permission,
-  unknown channel, file over Discord's ~10MB default limit, or a plain
-  network error) — `../interface/video_library_page.py`'s
-  `_on_discord_send_failed` just shows it directly in a `QMessageBox`.
-- `discord_token_store.py` — the Discord bot token, **per-machine**, unlike
-  the channel id above: every machine that should be able to use Send to
-  Discord needs the same studio bot token entered once via Repository
-  Setting > UkoreShot's Bot Token field. Same OS-keyring-first,
-  gitignored-JSON-fallback shape as `core/github/token_store.py` (the
-  app's top-level `core/`, its own established pattern for a real secret),
-  just deliberately re-implemented as plain module functions here instead
-  of a class — matching this folder's own `comment_store.py`/
-  `video_path_store.py` style (module functions, not classes needing
-  manual construction) rather than importing across to `core/github/`,
-  which has its own unrelated `SERVICE_NAME`/`KEYRING_USERNAME_KEY`
-  constants scoped to GitHub specifically. Fallback file lives under
-  `data/plugins/local/` (already wholesale-gitignored — see root
-  `.gitignore` — so it needed no new entry).
+  `sendToDiscordRequested`). `get_channel_id`/`set_channel_id` and
+  `get_bot_token`/`set_bot_token` all read/write the same per-repo,
+  studio-shared `"ukore_shot"` `PluginConfigStore` `video_path_store.py`
+  already uses (`discord_channel_id`/`discord_bot_token` keys,
+  `_repo_key`-namespaced the same way as `video_path_store.py`'s own
+  `repo_video_custom_path`). **The bot token is stored here too, as of
+  2026-08-08** — a deliberate, explicitly-confirmed-with-the-user tradeoff,
+  not an oversight: an earlier revision kept it out of git via the OS
+  keyring (mirroring `core/github/token_store.py`'s pattern, the app's own
+  top-level `core/`), but the user asked for every machine to pick up the
+  same token automatically via git instead, which means it's committed to
+  the studio repo in **plain text and stays in git history forever** —
+  repo access is effectively bot access. See the function's own docstring.
+  `find_or_create_forum_post(token, forum_channel_id, title)` resolves a
+  shot code (the video's own shot code, from `video_naming.py` — the
+  channel configured here must be a **Forum Channel**, not a plain text
+  one) to the id of the matching forum post (a Discord Thread): reuses one
+  with that exact name if it finds one among both active and archived
+  threads, otherwise creates a new one whose starter message is a
+  placeholder embed **authored by the bot** — that detail matters beyond
+  just cosmetics, since `Jacobot`'s (`cache/plugins/Jacobot/`, a separate
+  always-on service — see its own README) `/setdesc`/`/settitle`/
+  `/thumbnail` slash commands can only edit a starter message the bot
+  itself created (Discord only lets a message's own author edit it).
+  `send_video(token, channel_id, video_path, message)` then POSTs the
+  video as a file attachment to that resolved thread (a Discord thread
+  accepts the same `/channels/{id}/messages` endpoint a normal channel
+  does), hand-building the multipart/form-data body via stdlib `urllib`
+  (same "no `requests` dependency" convention `core/github/commits_api.py`
+  already uses) since this app has no multipart helper. Both functions
+  raise `DiscordApiError` with an already user-safe message for every
+  failure mode (bad token, missing permission, unknown channel, file over
+  Discord's ~10MB default limit, or a plain network error) —
+  `../interface/video_library_page.py`'s `_on_discord_send_failed` just
+  shows it directly in a `QMessageBox`. `get_max_upload_mb`/
+  `set_max_upload_mb` (per-repo, shared, `discord_max_upload_mb` key,
+  defaults to `DEFAULT_MAX_UPLOAD_MB`) and `get_ffmpeg_path`/
+  `set_ffmpeg_path` (**per-machine**, `shared=False` — unlike everything
+  else here, an ffmpeg install path only makes sense per machine) back the
+  compression step in `video_compress.py` below.
+- `video_compress.py` — added 2026-08-08 after a real "video too large"
+  `DiscordApiError` (HTTP 413) report: `compress_to_fit(ffmpeg_path,
+  video_path, max_bytes)` shells out to `ffmpeg` (via `subprocess`, no
+  Python video library dependency) to transcode a video down to a temp
+  `.mp4` under `max_bytes`, returning `video_path` unchanged if it's
+  already small enough (no transcode at all). Single-pass, bitrate
+  calculated from the video's own duration (read off ffmpeg's own stderr
+  "Duration:" line via `-i` with no output — avoids needing a separate
+  `ffprobe` lookup) with a 5% safety margin and a fixed 128kbps reserved
+  for audio — deliberately not a frame-accurate two-pass encode, which
+  would roughly double encode time for a use case that only needs to land
+  under a size cap, not hit it exactly. `resolve_ffmpeg_path` prefers an
+  explicit configured path (`discord_client.get_ffmpeg_path`) and falls
+  back to a PATH lookup, raising `VideoCompressionError` immediately if
+  neither resolves — same "explicit per-machine override, else PATH
+  lookup" shape `plugins/core/software_linker/` already uses for
+  `maya.exe`. `../interface/discord_send_worker.py` is the only caller:
+  compresses (into a fresh temp dir it cleans up afterward, success or
+  failure) only when the video's already over the configured limit, then
+  sends whichever path (original or compressed) actually ends up under it.
 
 **Working here:** stay inside `core/` unless the change needs a new
 top-level `core/` primitive (a genuinely different package, see the naming

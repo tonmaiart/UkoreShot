@@ -21,7 +21,12 @@ mechanism every other opt-in plugin's sidebar tab already uses (see the
 host app's `interface/main_window.py`'s `_apply_plugin_visibility`).
 Companion to the host app's `plugins/repo_internal/UkorePlayblast/`, which
 writes the video files this plugin's library lists — that plugin stayed
-put, still bundled in the main app.
+put, still bundled in the main app. As of 2026-08-08, this plugin is
+view-only: the whole draw/comment editor (drawing on a frame, per-frame
+comments, everything that used to live in `EditVideoDialog`) was
+extracted into its own separate plugin, `cache/plugins/BananaSketch/` —
+"Edit Comment" now opens that plugin instead of an in-app dialog (see
+`interface/README.md`'s `video_library_page.py` entry).
 
 ## Structure
 
@@ -31,7 +36,8 @@ of the whole plugin — this folder had grown to over a dozen flat files,
 most of them irrelevant to any one task:
 
 - [`core/`](core/README.md) — non-UI logic: video-root path resolution,
-  comment persistence, playblast filename parsing. No PySide6 imports.
+  playblast filename parsing, the Discord-send API client. No PySide6
+  imports.
 - [`interface/`](interface/README.md) — every PySide6 widget/page/dialog
   this plugin has.
 - [`images/`](images/README.md) — this plugin's own icon files (not the
@@ -56,9 +62,9 @@ submodule_search_locations=[...])`, *before* importing anything from
 `interface/`/`core/` — every other file in `core/`/`interface/` then
 imports its own siblings normally as `from ukoreshot_plugin.core import
 ...` / `from ukoreshot_plugin.interface... import ...`. See `plugin.py`
-itself for the exact bootstrap. The two files with a bare `from core...`
-import (`core/comment_store.py`, `interface/draw_overlay.py`) are
-unaffected by any of this — see the naming-collision note below.
+itself for the exact bootstrap. `core/video_path_store.py`'s bare
+`from core...` import is unaffected by any of this — see the naming note
+below.
 
 **Before touching a file in one of the four subfolders above, read that
 subfolder's own README first** — the same "read the local README before
@@ -71,16 +77,13 @@ task genuinely crosses the boundary (same discipline the `ukorehub-plugin`
 skill already asks for between *different* plugins — this applies it one
 level down, *within* this one plugin).
 
-**Naming collision to know about:** two different files in this plugin
-import a bare `from core...` — `core/comment_store.py`'s
-`from core.store import LocalConfigStore` and
-`interface/draw_overlay.py`'s `from core.extensibility import debug_log`.
-Both mean the app's own **top-level** `core/` package
-(`C:\Tonmai\UkoreHub\core\`), never this plugin's own `core/` subfolder —
-they're absolute imports, resolved from the repo root regardless of where
-the importing file lives, so there's no actual ambiguity at runtime; it's
-only confusing to a human skimming the two folders side by side. See
-`core/README.md`'s own naming note for more.
+**Naming note:** `core/video_path_store.py` imports a bare `from
+core.exceptions import NotFoundError` — this always means the app's own
+**top-level** `core/` package (`C:\Tonmai\UkoreHub\core\`), never this
+plugin's own `core/` subfolder — it's an absolute import, resolved from
+the repo root regardless of where the importing file lives, so there's no
+actual ambiguity at runtime; it's only confusing to a human skimming the
+two folders side by side. See `core/README.md`'s own naming note for more.
 
 For the `ukoreshot` skill (project-scoped, for working specifically in
 this plugin), see the host app's `.claude/skills/ukoreshot/SKILL.md` —
@@ -100,11 +103,35 @@ ties into `plugins/core/project_editor/`'s Custom Paths and
 ## Send to Discord
 
 Added 2026-08-08: a `send_discord_button` in the library's inline video
-player (`interface/player_widget.py`) posts whichever video is loaded to a
-Discord channel via a bot, for quick review outside the app. Channel ID is
-per-repo/studio-shared, the bot token is per-machine (OS keyring) — both
-configured under Repository Setting > UkoreShot. See
-`core/README.md`'s `discord_client.py`/`discord_token_store.py` entries and
+player (`interface/player_widget.py`) posts whichever video is loaded into
+a **Discord forum post** for quick review outside the app — specifically
+the post whose title matches the video's own shot code (e.g. `KBA030`,
+from `core/video_naming.py`'s parse), reusing one if it already exists or
+creating it otherwise (`core/discord_client.py`'s
+`find_or_create_forum_post`). Both Forum Channel ID and Bot Token are
+per-repo and studio-shared (git-tracked), configured under Repository
+Setting > UkoreShot — **the Bot Token is plain text in this repo's git
+history**, a deliberate tradeoff confirmed with the user so every machine
+gets it automatically via git instead of each one needing the token
+entered separately into an OS keyring (an earlier revision's approach);
+only use a bot you're fine with the whole studio effectively controlling.
+A video over the configured Max Upload Size (default 10MB, Discord's own
+un-boosted cap) is compressed with `ffmpeg` first
+(`core/video_compress.py`'s `compress_to_fit`, called from
+`interface/discord_send_worker.py`) — requires `ffmpeg` installed on
+whichever machine clicks the button; see Repository Setting > UkoreShot's
+Max Upload Size / ffmpeg Path fields.
+
+Editing a post's description/title/thumbnail after it's created
+(`/setdesc`, `/settitle`, `/thumbnail`) is **not** handled by UkoreHub at
+all — that's `Jacobot` (`cache/plugins/Jacobot/`, a separate always-on bot
+service, own README explains why a persistent server is required for
+Discord slash commands in a way a desktop app can't provide). UkoreHub's
+only job is creating the post with a bot-authored placeholder starter
+message in the first place, which is what makes those commands able to
+edit it afterward (Discord only lets a message's own author edit it).
+
+See `core/README.md`'s `discord_client.py` entry and
 `interface/README.md`'s `discord_send_worker.py`/`repo_video_settings_page.py`
 entries for the full mechanics.
 

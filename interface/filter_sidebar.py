@@ -17,17 +17,18 @@ _LIST_HEIGHT = 80
 
 # (category key, display label) — category keys match the dict keys
 # video_library_page.py's _collect_filter_values/_video_matches_filters
-# use, and video_naming.parse_video_filename's own field names for the
-# first five ("sequence" maps to parse_video_filename's "sequence" key,
-# etc.) — the last, "commenter", isn't a video_naming field at all, see
-# comment_store.list_commenters.
+# use, and video_naming.parse_video_filename's own field names
+# ("sequence" maps to parse_video_filename's "sequence" key, etc.). Used
+# to have a sixth "commenter" category ("Commented By") — dropped
+# 2026-08-08 when comment_store.py (its data source) moved to
+# cache/plugins/BananaSketch/ along with the rest of the draw/comment
+# editor; this plugin no longer reads comment data at all.
 _CATEGORIES = [
     ("sequence", "Sequence"),
     ("shot_code", "Shot Name"),
     ("variation", "Variation"),
     ("index", "Index"),
     ("version", "Version"),
-    ("commenter", "Commented By"),
 ]
 
 

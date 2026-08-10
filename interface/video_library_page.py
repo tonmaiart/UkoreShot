@@ -16,10 +16,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from interface.section_registry import SectionHost
 from interface.shared.widget_helpers import show_exclusive, wrap_scrollable
-from ukoreshot_plugin.core import comment_store, discord_client, discord_token_store, video_naming, video_path_store
+from ukoreshot_plugin.core import discord_client, video_naming, video_path_store
 from ukoreshot_plugin.interface.discord_send_worker import DiscordSendWorker
-from ukoreshot_plugin.interface.edit_video_dialog import EditVideoDialog
 from ukoreshot_plugin.interface.filter_sidebar import FilterSidebar
 from ukoreshot_plugin.interface.flow_layout import FlowLayout
 from ukoreshot_plugin.interface.player_widget import PlayerWidget
@@ -62,9 +62,7 @@ _DEFAULT_SORT = _SORT_NEWEST
 # video_naming.parse_video_filename's dict keys, in filter_sidebar.py's
 # category order — used to build FilterSidebar.set_available_values'
 # input and to test a parsed video against the sidebar's selections in
-# _video_matches_filters. "commenter" isn't one of parse_video_filename's
-# keys (see comment_store.list_commenters instead), so it's handled
-# separately in both places.
+# _video_matches_filters.
 _NAMING_FILTER_FIELDS = ["sequence", "shot_code", "variation", "index", "version"]
 
 
@@ -167,9 +165,12 @@ class _VideoCard(QFrame):
 
 class UkoreShotPage(QWidget):
     """The UkoreShot sidebar tab's page — a plain PlayerWidget (top half,
-    playback only — drawing/comments live in EditVideoDialog, opened via
-    "Edit Comment") plus a video library (bottom half) for picking which
-    video to play. `content_layout` gives player_panel/library_panel
+    playback only — no drawing/comment capability of its own at all;
+    "Edit Comment" opens BananaSketch instead, a separate plugin, via
+    `SectionHost.navigate_and_focus` — see `set_host`/
+    `_on_edit_comment_clicked` and this plugin's own `plugin.py`) plus a
+    video library (bottom half) for picking which video to play.
+    `content_layout` gives player_panel/library_panel
     equal `stretch=1` so the two always split available height 50/50,
     confirmed with the user 2026-07-20. The library itself is
     `filter_sidebar` (left, `FilterSidebar` — see that file) next to
@@ -188,7 +189,6 @@ class UkoreShotPage(QWidget):
         self._video_root: Path | None = None
         self._all_videos: list[Path] = []
         self._parsed_by_video: dict[Path, dict | None] = {}
-        self._commenters_by_video: dict[Path, set] = {}
         self._cards: dict[str, _VideoCard] = {}
         self._selected_card: _VideoCard | None = None
         # Survives _clear_cards' teardown (unlike _selected_card, a
@@ -197,6 +197,12 @@ class UkoreShotPage(QWidget):
         # see _restore_or_default_selection.
         self._selected_video_path: Path | None = None
         self._discord_worker: DiscordSendWorker | None = None
+        # Set once via set_host (plugin.py's _wire, called at app startup)
+        # — the SectionHost this page uses to open BananaSketch for Edit
+        # Comment (see _on_edit_comment_clicked). None only in the brief
+        # window before wiring runs, which no user-triggered code path can
+        # reach in practice.
+        self._host: SectionHost | None = None
         self._sort_mode = _DEFAULT_SORT
         self._card_size_mode = _DEFAULT_CARD_SIZE
         self._thumbnail_loader = ThumbnailLoader(self)
@@ -297,15 +303,15 @@ class UkoreShotPage(QWidget):
         library_panel_layout.addWidget(self.cards_scroll, stretch=1)
         library_panel_layout.addWidget(self.list_empty_label)
 
-        # Edit Comment now lives inside PlayerWidget itself (view mode) as
-        # a square icon button next to Show/Hide Comments — moved out of
-        # this page 2026-07-20 per the user's own request. PlayerWidget
-        # tracks its own enabled state (load_video/clear_video) since it
-        # already knows whether a video is loaded; this page just needs to
-        # know *which* video to open when the signal fires, via
-        # _selected_card (set in _select_card, always alongside
-        # load_video).
-        self.player_widget = PlayerWidget(show_edit_tools=False)
+        # Edit Comment lives inside PlayerWidget itself as a square icon
+        # button — PlayerWidget tracks its own enabled state
+        # (load_video/clear_video) since it already knows whether a video
+        # is loaded; this page just needs to know *which* video to open
+        # when the signal fires, via _selected_card (set in _select_card,
+        # always alongside load_video), and now (2026-08-08) opens
+        # BananaSketch via SectionHost.navigate_and_focus instead of an
+        # in-app EditVideoDialog — see set_host/_on_edit_comment_clicked.
+        self.player_widget = PlayerWidget()
         self.player_widget.editCommentRequested.connect(self._on_edit_comment_clicked)
         self.player_widget.sendToDiscordRequested.connect(self._on_send_discord_clicked)
 
@@ -332,6 +338,12 @@ class UkoreShotPage(QWidget):
 
     # -- standard page protocol -------------------------------------------
 
+    def set_host(self, host: SectionHost) -> None:
+        """Called once from plugin.py's _wire (SectionSpec.wire, run at app
+        startup) — see _on_edit_comment_clicked for the one thing this
+        page uses it for."""
+        self._host = host
+
     def set_repo(self, project, repo, workspace_root: str) -> None:
         self._project_id = project.id if project is not None else None
         self._repo_id = repo.id if repo is not None else None
@@ -354,7 +366,6 @@ class UkoreShotPage(QWidget):
         self._video_root = None
         self._all_videos = []
         self._parsed_by_video = {}
-        self._commenters_by_video = {}
         if self._project_id and self._repo_id:
             self._video_root = video_path_store.resolve_video_root(self._api, self._project_id, self._repo_id)
         self._update_empty_state()
@@ -373,24 +384,25 @@ class UkoreShotPage(QWidget):
         ]
         for video_path in self._all_videos:
             self._parsed_by_video[video_path] = video_naming.parse_video_filename(video_path)
-            self._commenters_by_video[video_path] = comment_store.list_commenters(video_path)
 
         self.filter_sidebar.set_available_values(self._collect_filter_values())
         self._apply_filter()
 
     def _collect_filter_values(self) -> dict:
-        """{"sequence": [...], "shot_code": [...], ..., "commenter": [...]}
-        — every distinct value currently present across `_all_videos`, for
+        """{"sequence": [...], "shot_code": [...], ...} — every distinct
+        value currently present across `_all_videos`, for
         `filter_sidebar.set_available_values`. A video that doesn't parse
         under the naming convention contributes "Unknown" to every
-        video_naming-derived category instead of being left out."""
+        video_naming-derived category instead of being left out. No more
+        "commenter" category (dropped 2026-08-08 — comment_store.py, its
+        data source, moved to cache/plugins/BananaSketch/ along with the
+        rest of the draw/comment editor; this plugin no longer reads
+        comment data at all)."""
         values = {field: set() for field in _NAMING_FILTER_FIELDS}
-        values["commenter"] = set()
         for video_path in self._all_videos:
             parsed = self._parsed_by_video.get(video_path)
             for field in _NAMING_FILTER_FIELDS:
                 values[field].add(_format_filter_value(field, parsed))
-            values["commenter"].update(self._commenters_by_video.get(video_path, set()))
         return {key: _sort_with_unknown_last(v) for key, v in values.items()}
 
     def _clear_cards(self) -> None:
@@ -411,9 +423,6 @@ class UkoreShotPage(QWidget):
                 continue
             if _format_filter_value(field, parsed) not in selected:
                 return False
-        selected_commenters = self.filter_sidebar.selected_values("commenter")
-        if selected_commenters and not (self._commenters_by_video.get(video_path, set()) & selected_commenters):
-            return False
         return True
 
     def _sort_videos(self, videos: list[Path]) -> list[Path]:
@@ -496,33 +505,56 @@ class UkoreShotPage(QWidget):
         self.player_widget.load_video(card.video_path)
 
     def _on_edit_comment_clicked(self) -> None:
-        if self._selected_card is None:
+        if self._selected_card is None or self._host is None:
             return
-        EditVideoDialog(self._selected_card.video_path, self).exec()
+        self._host.navigate_and_focus("banana_sketch", self._selected_card.video_path)
 
     def _on_send_discord_clicked(self) -> None:
         if self._selected_card is None or self._project_id is None or self._repo_id is None:
             return
+        video_path = self._selected_card.video_path
+        parsed = self._parsed_by_video.get(video_path)
+        if not parsed:
+            QMessageBox.warning(
+                self,
+                "Send to Discord",
+                "This video's filename doesn't match the playblast naming convention, so its shot code can't be "
+                "determined — Send to Discord needs one to find or create the matching forum post.",
+            )
+            return
+        shot_title = parsed["shot_code"]
+
         channel_id = discord_client.get_channel_id(self._api, self._project_id, self._repo_id)
         if not channel_id:
             QMessageBox.warning(
                 self,
                 "Discord Not Configured",
-                "No Discord channel is set for this repo — set one under Repository Setting > UkoreShot first.",
+                "No Discord forum channel is set for this repo — set one under Repository Setting > UkoreShot first.",
             )
             return
-        token = discord_token_store.load_token()
+        token = discord_client.get_bot_token(self._api, self._project_id, self._repo_id)
         if not token:
             QMessageBox.warning(
                 self,
                 "Discord Not Configured",
-                "No Discord bot token is saved on this machine — set one under Repository Setting > UkoreShot first.",
+                "No Discord bot token is set for this repo — set one under Repository Setting > UkoreShot first.",
             )
             return
 
-        video_path = self._selected_card.video_path
+        max_upload_bytes = discord_client.get_max_upload_mb(self._api, self._project_id, self._repo_id) * 1024 * 1024
+        ffmpeg_path = discord_client.get_ffmpeg_path(self._api)
+
         self.player_widget.send_discord_button.setEnabled(False)
-        self._discord_worker = DiscordSendWorker(token, channel_id, video_path, video_path.name, self)
+        self._discord_worker = DiscordSendWorker(
+            token,
+            channel_id,
+            shot_title,
+            video_path,
+            video_path.name,
+            max_upload_bytes=max_upload_bytes,
+            ffmpeg_path=ffmpeg_path,
+            parent=self,
+        )
         self._discord_worker.succeeded.connect(self._on_discord_send_succeeded)
         self._discord_worker.failed.connect(self._on_discord_send_failed)
         self._discord_worker.finished.connect(self._discord_worker.deleteLater)

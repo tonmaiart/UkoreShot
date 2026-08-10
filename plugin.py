@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from interface.section_registry import SectionSpec
+from interface.section_registry import SectionHost, SectionSpec
 from interface.settings_tab_registry import CATEGORY_REPO, SettingsTabSpec
 
 # This plugin lives in its own separate git repo, cloned into
@@ -43,6 +43,15 @@ PLUGIN_ID = "ukore_shot"
 _ICON_PATH = Path(__file__).resolve().parent / "images" / "icons8-video-50.png"
 
 
+def _wire(page: UkoreShotPage, host: SectionHost) -> None:
+    # UkoreShot's own Edit Comment button needs to open BananaSketch
+    # (host.navigate_and_focus("banana_sketch", video_path)) instead of an
+    # in-app dialog now that the draw/comment editor lives in that
+    # separate plugin (moved 2026-08-08) — see
+    # video_library_page.py's _on_edit_comment_clicked.
+    page.set_host(host)
+
+
 def register(api) -> None:
     # A normal (non-persistent) section — main_window.py's
     # _apply_plugin_visibility already hides this tab for any repo whose
@@ -52,13 +61,20 @@ def register(api) -> None:
     # plugin like this one), the exact "appears only in the Sidebar of
     # opted-in repos" behavior asked for — no extra plumbing needed, see
     # launcher.py's section_key_to_plugin_id diffing.
+    #
+    # page is constructed once here (not inside page_factory's lambda) so
+    # _wire receives the exact same instance the Sidebar ends up showing —
+    # mirrors plugins/core/submit/plugin.py's own _wire pattern, the
+    # documented example this cross-plugin wiring follows.
+    page = UkoreShotPage(api=api)
     api.register_section(
         SectionSpec(
             key=PLUGIN_ID,
             label="UkoreShot",
             order=50,
-            page_factory=lambda: UkoreShotPage(api=api),
+            page_factory=lambda: page,
             icon_path=_ICON_PATH,
+            wire=_wire,
         )
     )
     api.register_settings_tab(
