@@ -19,11 +19,13 @@ drawing on a frame, per-frame comments, or anything that used to live in
 ## Files
 
 - `repo_video_settings_page.py` — `RepoVideoSettingsPage`, the
-  `CATEGORY_REPO` Settings tab. Same self-resolving-active-repo `refresh()`
-  + "list of choices, auto-use if there's only one" pattern as
-  `plugins/repo_internal/RigPublisher/settings_page.py`'s
-  `RigPublisherSettingsPage`, just pointed at `custom_paths` instead of
-  `pipeline_inputs` (via `../core/video_path_store.py`). Also owns a
+  `CATEGORY_REPO` Settings tab. Since the video library moved to a fixed
+  per-machine `cache_dir` folder (no more repo Custom Path picker —
+  see `core/README.md`'s `video_path_store.py` entry), `hint_label` here
+  is purely informational: `refresh()` re-resolves the active project/repo
+  and shows the actual local folder path videos live in for it (via
+  `video_path_store.resolve_video_root`), nothing to pick or clear. Also
+  owns a
   `QGroupBox("Discord")` section (for the "Send to Discord" button, see
   `player_widget.py`/`video_library_page.py` below) — labeled "Forum
   Channel ID" in the UI, since it must be a Discord Forum Channel, not a

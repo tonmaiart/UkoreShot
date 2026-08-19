@@ -489,7 +489,7 @@ class UkoreShotPage(QWidget):
             return
         if self._video_root is None:
             self.empty_label.setText(
-                "No video library configured for this repo yet — set one in Repository Setting > UkoreShot."
+                "Couldn't access this repo's local video folder — see Repository Setting > UkoreShot."
             )
             show_exclusive(self.empty_label, self.content_widget)
             return

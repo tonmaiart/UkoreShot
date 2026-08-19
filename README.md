@@ -93,12 +93,14 @@ only relevant when this plugin is checked out inside that app's own
 
 ## Where the video library folder comes from
 
-UkoreShot does **not** own its own free-text folder setting — a studio
-admin picks one of the active repo's own declared Custom Paths under
-Repository Setting > UkoreShot instead. See `core/README.md`'s
-`video_path_store.py` entry for the exact resolution order and how it
-ties into `plugins/core/project_editor/`'s Custom Paths and
-`plugins/repo_internal/UkorePlayblast/`'s output folder.
+The playblast video library is a fixed per-machine folder under UkoreHub's
+own gitignored `cache/` directory (`api.cache_dir / "ukore_shot" /
+<project_id> / <repo_id>`) — not something a studio admin configures, and
+not inside the repo checkout at all, so it's never synced via git/repo
+sync and never shared across machines. See `core/README.md`'s
+`video_path_store.py` entry for the exact resolution, and
+`cache/plugins/UkorePlayblast/`'s README for how the Maya-side writer
+resolves the same folder independently.
 
 ## Send to Discord
 
@@ -137,8 +139,7 @@ entries for the full mechanics.
 
 **Working here:** stay inside this plugin folder (respecting the
 subfolder-scoping rule above) unless the change needs a new top-level
-`core/` primitive, or touches `plugins/core/project_editor/`'s Custom
-Paths data shape (read-only, via the convention in `core/README.md`) or
-`plugins/repo_internal/UkorePlayblast/`'s output (read-only, both plugins just
-happen to agree on the same resolved folder — see that plugin's own
-README for the Maya-side half of this feature).
+`core/` primitive, or touches `cache/plugins/UkorePlayblast/`'s output
+(read-only, both plugins just happen to agree on the same
+`cache_dir`-derived folder — see that plugin's own README for the
+Maya-side half of this feature).

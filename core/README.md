@@ -21,30 +21,22 @@ forward.)
 
 ## Files
 
-- `video_path_store.py` — reads the active repo's Custom Paths off
-  `project_editor`'s store, stores UkoreShot's own chosen `custom_path_id`
-  in its own `PluginConfigStore` (`data/plugins/core/ukore_shot.json`,
-  `repo_video_custom_path: {"<project_id>:<repo_id>": "<custom_path_id>"}`),
-  and `resolve_video_root(api, project_id, repo_id)` — joins
-  `workspace_root / repo.local_path / custom_path.path` into the actual
-  absolute folder.
-
-  UkoreShot does **not** own its own free-text folder setting — instead,
-  Repository Setting > UkoreShot (`../interface/repo_video_settings_page.py`)
-  lets a studio admin pick one of the active repo's own already-declared
-  **Custom Paths** (Repository Setting > Custom Paths > Create Input Path,
-  owned by `plugins/core/project_editor/` — see that plugin's README) as
-  this repo's playblast video root. Read directly off `project_editor`'s
-  shared `PluginConfigStore` (`data/plugins/core/project_editor.json`),
-  the "convention, not import" pattern every cross-plugin read in this app
-  uses — see `plugins/README.md`'s "Sharing data with another plugin".
-  Auto-uses the repo's only declared Custom Path if there's exactly one (no
-  explicit choice needed); requires an explicit pick if there's more than
-  one; resolves to nothing if there are none yet. `resolve_video_root`'s
-  resolution order mirrors `PublishApi.repo_paths.get_publish_root`'s own
-  convention. `plugins/repo_internal/UkorePlayblast/`'s Maya-side `function.py`
-  reads UkoreShot's own choice the same "construct the store straight off
-  disk" way (no shared bridge file needed) — see that plugin's README.
+- `video_path_store.py` — `resolve_video_root(api, project_id, repo_id)`:
+  a fixed per-machine folder under `api.cache_dir / "ukore_shot" /
+  project_id / repo_id`, created (`mkdir(parents=True, exist_ok=True)`) on
+  every resolution. As of the cache-folder move, UkoreShot's playblast
+  library is entirely local to each machine — it lives under UkoreHub's
+  own gitignored `cache/` dir (see root `CLAUDE.md`'s "Program folder
+  stays program-only"), never inside the repo checkout, so it's never
+  synced via git/repo pull or push and never shared across machines. There
+  is no longer a studio-admin picker for this (the old Repository Setting
+  > UkoreShot Custom Path list is gone — see
+  `../interface/repo_video_settings_page.py`, now purely informational).
+  `cache/plugins/UkorePlayblast/`'s Maya-side `function.py`'s
+  `_resolve_video_root` mirrors this exactly via
+  `PublishApi.repo_paths.find_cache_dir()` (no shared bridge file needed —
+  both sides just agree on the same `cache_dir/ukore_shot/<project_id>/
+  <repo_id>` folder) — see that plugin's README.
 - `video_naming.py` — `parse_video_filename(video_path) -> dict | None`:
   the desktop-side reader of UkorePlayblast's flat
   `SEQ_ShotCode_Variation_index_version.ext` naming convention (see that
@@ -121,6 +113,7 @@ forward.)
 
 **Working here:** stay inside `core/` unless the change needs a new
 top-level `core/` primitive (a genuinely different package, see the naming
-note above) or touches `plugins/core/project_editor/`'s Custom Paths
-data shape / `plugins/repo_internal/UkorePlayblast/`'s output (both read-only,
-via the conventions documented above).
+note above) or touches `cache/plugins/UkorePlayblast/`'s matching
+`_resolve_video_root` (read-only from this plugin's side — both just
+happen to agree on the same `cache_dir`-derived folder, see that plugin's
+own README).
