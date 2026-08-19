@@ -271,7 +271,7 @@ class PlayerWidget(QWidget):
 
         # edit_comment_button: a fixed 1:1 square icon button, emits
         # editCommentRequested for video_library_page.py to open
-        # BananaSketch (SectionHost.navigate_and_focus) — used to open an
+        # BananaSketch (UICommandService.navigate_and_focus) — used to open an
         # in-app EditVideoDialog before that editor moved out to its own
         # plugin 2026-08-08; the button's own meaning to an artist
         # ("Edit") hasn't changed, only what it opens. send_discord_button:

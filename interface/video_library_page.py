@@ -16,8 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from interface.section_registry import SectionHost
-from interface.shared.widget_helpers import show_exclusive, wrap_scrollable
+from plugin_api import UICommandService, show_exclusive, wrap_scrollable
 from ukoreshot_plugin.core import discord_client, video_naming, video_path_store
 from ukoreshot_plugin.interface.discord_send_worker import DiscordSendWorker
 from ukoreshot_plugin.interface.filter_sidebar import FilterSidebar
@@ -167,7 +166,7 @@ class UkoreShotPage(QWidget):
     """The UkoreShot sidebar tab's page — a plain PlayerWidget (top half,
     playback only — no drawing/comment capability of its own at all;
     "Edit Comment" opens BananaSketch instead, a separate plugin, via
-    `SectionHost.navigate_and_focus` — see `set_host`/
+    `UICommandService.navigate_and_focus` — see `set_host`/
     `_on_edit_comment_clicked` and this plugin's own `plugin.py`) plus a
     video library (bottom half) for picking which video to play.
     `content_layout` gives player_panel/library_panel
@@ -198,11 +197,11 @@ class UkoreShotPage(QWidget):
         self._selected_video_path: Path | None = None
         self._discord_worker: DiscordSendWorker | None = None
         # Set once via set_host (plugin.py's _wire, called at app startup)
-        # — the SectionHost this page uses to open BananaSketch for Edit
-        # Comment (see _on_edit_comment_clicked). None only in the brief
-        # window before wiring runs, which no user-triggered code path can
-        # reach in practice.
-        self._host: SectionHost | None = None
+        # — the UICommandService this page uses to open BananaSketch for
+        # Edit Comment (see _on_edit_comment_clicked). None only in the
+        # brief window before wiring runs, which no user-triggered code
+        # path can reach in practice.
+        self._host: UICommandService | None = None
         self._sort_mode = _DEFAULT_SORT
         self._card_size_mode = _DEFAULT_CARD_SIZE
         self._thumbnail_loader = ThumbnailLoader(self)
@@ -309,7 +308,7 @@ class UkoreShotPage(QWidget):
         # is loaded; this page just needs to know *which* video to open
         # when the signal fires, via _selected_card (set in _select_card,
         # always alongside load_video), and now (2026-08-08) opens
-        # BananaSketch via SectionHost.navigate_and_focus instead of an
+        # BananaSketch via UICommandService.navigate_and_focus instead of an
         # in-app EditVideoDialog — see set_host/_on_edit_comment_clicked.
         self.player_widget = PlayerWidget()
         self.player_widget.editCommentRequested.connect(self._on_edit_comment_clicked)
@@ -338,7 +337,7 @@ class UkoreShotPage(QWidget):
 
     # -- standard page protocol -------------------------------------------
 
-    def set_host(self, host: SectionHost) -> None:
+    def set_host(self, host: UICommandService) -> None:
         """Called once from plugin.py's _wire (SectionSpec.wire, run at app
         startup) — see _on_edit_comment_clicked for the one thing this
         page uses it for."""

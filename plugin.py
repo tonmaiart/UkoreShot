@@ -4,8 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from interface.section_registry import SectionHost, SectionSpec
-from interface.settings_tab_registry import CATEGORY_REPO, SettingsTabSpec
+from plugin_api import CATEGORY_REPO, SectionSpec, SettingsTabSpec, UICommandService
 
 # This plugin lives in its own separate git repo, cloned into
 # cache/plugins/UkoreShot/ rather than under the main app's plugins/
@@ -43,7 +42,7 @@ PLUGIN_ID = "ukore_shot"
 _ICON_PATH = Path(__file__).resolve().parent / "images" / "icons8-video-50.png"
 
 
-def _wire(page: UkoreShotPage, host: SectionHost) -> None:
+def _wire(page: UkoreShotPage, host: UICommandService) -> None:
     # UkoreShot's own Edit Comment button needs to open BananaSketch
     # (host.navigate_and_focus("banana_sketch", video_path)) instead of an
     # in-app dialog now that the draw/comment editor lives in that

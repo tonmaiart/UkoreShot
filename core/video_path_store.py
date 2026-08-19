@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.exceptions import NotFoundError
+from plugin_api import NotFoundError
 
 _SELECTION_KEY = "repo_video_custom_path"
 
