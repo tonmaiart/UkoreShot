@@ -36,6 +36,16 @@ from ukoreshot_plugin.interface.repo_video_settings_page import RepoVideoSetting
 from ukoreshot_plugin.interface.video_library_page import UkoreShotPage  # noqa: E402
 
 PLUGIN_ID = "ukore_shot"
+
+# Maya-side playblast tool (maya-scripts/UkorePlayblast/), merged into this
+# plugin 2026-08-20 — previously its own separate "ukore_playblast" plugin.
+# This TOOL_ID is only the maya_launcher_env_bridge contribution/label key
+# (see plugins/repo_internal/maya_launcher/README.md's "contributions"/
+# "labels" shape), unrelated to this plugin's own manifest id above.
+_MAYA_TOOL_ID = "ukore_playblast"
+_MAYA_TOOL_LABEL = "UkorePlayblast"
+_MAYA_ENV_BRIDGE_PLUGIN_ID = "maya_launcher_env_bridge"
+_ANY_VERSION = "*"
 # This plugin's own images/ folder, not the shared data/icons/ every other
 # plugin's SectionSpec.icon_path points at (see images/README.md's own
 # note on this deliberate exception).
@@ -86,3 +96,32 @@ def register(api) -> None:
             category=CATEGORY_REPO,
         )
     )
+
+    # Contributes maya-scripts/UkorePlayblast/ to Maya's PYTHONPATH via the
+    # shared maya_launcher_env_bridge, same convention every other Maya tool
+    # plugin uses (core.* importability itself already comes from
+    # PublishApi's own contribution, which also adds api.app_root to
+    # PYTHONPATH — this plugin requires "publish_api", see manifest.json).
+    bridge = api.project_plugin_config_store(_MAYA_ENV_BRIDGE_PLUGIN_ID)
+    if bridge is not None:
+        tool_root = Path(__file__).resolve().parent
+        contributions = bridge.get("contributions", {})
+        contributions[_MAYA_TOOL_ID] = {"PYTHONPATH": {_ANY_VERSION: [str(tool_root / "maya-scripts")]}}
+        bridge.set("contributions", contributions)
+        labels = bridge.get("labels", {})
+        labels[_MAYA_TOOL_ID] = _MAYA_TOOL_LABEL
+        bridge.set("labels", labels)
+
+        # maya-scripts/UkorePlayblast/__init__.py registers this tool's own
+        # "Playblast"/"Playblast Options..." items directly into ukore_menu
+        # (no longer wired through MayaToolkit) — must be imported every
+        # Maya session for that module-level registration to run at all, see
+        # UkoreMenu's own README's "auto-import ตอน Maya เปิดไฟล์" requirement.
+        # order must stay below UkoreMenu's own (99) so registration runs
+        # before UkoreMenu's rebuild_menu().
+        hooks = bridge.get("launch_hooks", {})
+        hooks[_MAYA_TOOL_ID] = {
+            "order": 10,
+            "pre_open_mel": 'python("try:\\n    import UkorePlayblast\\nexcept ImportError:\\n    pass");',
+        }
+        bridge.set("launch_hooks", hooks)

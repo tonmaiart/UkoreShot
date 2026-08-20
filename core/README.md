@@ -32,15 +32,15 @@ forward.)
   is no longer a studio-admin picker for this (the old Repository Setting
   > UkoreShot Custom Path list is gone — see
   `../interface/repo_video_settings_page.py`, now purely informational).
-  `cache/plugins/UkorePlayblast/`'s Maya-side `function.py`'s
-  `_resolve_video_root` mirrors this exactly via
-  `PublishApi.repo_paths.find_cache_dir()` (no shared bridge file needed —
-  both sides just agree on the same `cache_dir/ukore_shot/<project_id>/
-  <repo_id>` folder) — see that plugin's README.
+  `../maya-scripts/UkorePlayblast/function.py`'s `_resolve_video_root`
+  mirrors this exactly via `PublishApi.repo_paths.find_cache_dir()` (no
+  shared bridge file needed — both sides just agree on the same
+  `cache_dir/ukore_shot/<project_id>/<repo_id>` folder) — see
+  `../maya-scripts/README.md`.
 - `video_naming.py` — `parse_video_filename(video_path) -> dict | None`:
-  the desktop-side reader of UkorePlayblast's flat
-  `SEQ_ShotCode_Variation_index_version.ext` naming convention (see that
-  plugin's README for the full scheme) — `_FILENAME_PATTERN` mirrors
+  the desktop-side reader of `../maya-scripts/UkorePlayblast/`'s flat
+  `SEQ_ShotCode_Variation_index_version.ext` naming convention (see
+  `../maya-scripts/README.md` for the full scheme) — `_FILENAME_PATTERN` mirrors
   `function.py`'s own pattern exactly (duplicated for the same "Maya's
   Python can't import this desktop-side package" reason every other
   cross-environment duplication in this codebase exists for). Returns
@@ -113,7 +113,6 @@ forward.)
 
 **Working here:** stay inside `core/` unless the change needs a new
 top-level `core/` primitive (a genuinely different package, see the naming
-note above) or touches `cache/plugins/UkorePlayblast/`'s matching
-`_resolve_video_root` (read-only from this plugin's side — both just
-happen to agree on the same `cache_dir`-derived folder, see that plugin's
-own README).
+note above) or touches `../maya-scripts/UkorePlayblast/`'s matching
+`_resolve_video_root` (read-only from this side — both just happen to
+agree on the same `cache_dir`-derived folder, see `../maya-scripts/README.md`).

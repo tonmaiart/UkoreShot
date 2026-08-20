@@ -19,9 +19,16 @@ visible only for repos that opted in under Settings > Repo > Requirements
 so no data-model change was needed for the move), the same opt-in
 mechanism every other opt-in plugin's sidebar tab already uses (see the
 host app's `interface/main_window.py`'s `_apply_plugin_visibility`).
-Companion to the host app's `plugins/repo_internal/UkorePlayblast/`, which
-writes the video files this plugin's library lists — that plugin stayed
-put, still bundled in the main app. As of 2026-08-08, this plugin is
+Includes the Maya-side playblast tool that writes the video files this
+plugin's library lists (`maya-scripts/UkorePlayblast/`) — merged in on
+2026-08-20 from its own former separate plugin, `cache/plugins/UkorePlayblast/`
+(own manifest id `ukore_playblast`), since the two already agreed on
+everything that mattered (video-root folder, naming convention) and the
+Maya-side tool never had a UkoreHub desktop UI of its own anyway. See
+`maya-scripts/README.md` for that half; its own menu items now register
+directly into `ukore_menu` instead of being wired through `MayaToolkit`
+(see that README's "Menu registration" section). As of 2026-08-08, this
+plugin is
 view-only: the whole draw/comment editor (drawing on a frame, per-frame
 comments, everything that used to live in `EditVideoDialog`) was
 extracted into its own separate plugin, `cache/plugins/BananaSketch/` —
@@ -45,6 +52,13 @@ most of them irrelevant to any one task:
 - [`bug-history/`](bug-history/README.md) — bugs fixed specifically within
   this plugin's own code, same format as the repo-root `developer/bug-history/`,
   going forward from 2026-07-21.
+- [`maya-scripts/`](maya-scripts/README.md) — the Maya-side playblast tool
+  (`UkorePlayblast/` package), merged in 2026-08-20 from its own former
+  separate plugin. A completely separate Python environment (Maya's own
+  `mayapy`, not this desktop app) — nothing here imports from `core/`/
+  `interface/`, and vice versa; where both sides need to agree on
+  something (the video-root folder, the naming convention) it's
+  duplicated deliberately rather than shared, see that folder's README.
 - `manifest.json` / `plugin.py` / `__init__.py` — plugin entry point,
   stay at this top level: the host app's plugin loader
   (`core/extensibility/loader.py`'s `_load_one`) looks for both
@@ -99,8 +113,9 @@ own gitignored `cache/` directory (`api.cache_dir / "ukore_shot" /
 not inside the repo checkout at all, so it's never synced via git/repo
 sync and never shared across machines. See `core/README.md`'s
 `video_path_store.py` entry for the exact resolution, and
-`cache/plugins/UkorePlayblast/`'s README for how the Maya-side writer
-resolves the same folder independently.
+`maya-scripts/README.md`'s `function.py` entry for how the Maya-side
+writer resolves the same folder independently (duplicated, not imported —
+`mayapy` has no `PluginAPI` instance to resolve `api.cache_dir` from).
 
 ## Send to Discord
 
@@ -139,7 +154,6 @@ entries for the full mechanics.
 
 **Working here:** stay inside this plugin folder (respecting the
 subfolder-scoping rule above) unless the change needs a new top-level
-`core/` primitive, or touches `cache/plugins/UkorePlayblast/`'s output
-(read-only, both plugins just happen to agree on the same
-`cache_dir`-derived folder — see that plugin's own README for the
-Maya-side half of this feature).
+`core/` primitive. `maya-scripts/`'s output is read-only from `core/`'s
+side (both just happen to agree on the same `cache_dir`-derived folder,
+see `maya-scripts/README.md`'s `function.py` entry).

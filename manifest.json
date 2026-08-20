@@ -1,9 +1,9 @@
 {
   "id": "ukore_shot",
   "name": "UkoreShot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "api_version": 1,
   "entry_point": "plugin.py",
-  "description": "Per-repo video library of Maya playblasts (written by UkorePlayblast) with a built-in player. Frame-by-frame drawing/comment review opens in the separate BananaSketch plugin.",
-  "requires": ["project_editor"]
+  "description": "Per-repo video library of Maya playblasts with a built-in player, plus the configurable Maya playblast tool itself (maya-scripts/UkorePlayblast/, merged in 2026-08-20 — previously the separate ukore_playblast plugin). Frame-by-frame drawing/comment review opens in the separate BananaSketch plugin.",
+  "requires": ["project_editor", "publish_api"]
 }
