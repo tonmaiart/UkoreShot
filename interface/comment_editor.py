@@ -671,18 +671,31 @@ class CommentEditor(QDialog):
         tableWidget_comment read-only: the only way to add/edit a
         comment's text now, via a QInputDialog instead of in-cell editing.
         Operates on whichever row is currently selected (the composer row
-        for the current frame, or an existing comment row)."""
+        for the current frame, or an existing comment row) — but no row
+        stays selected after every frame change (_refresh_table rebuilds
+        the table's items from scratch, dropping any prior current row), so
+        requiring a row selected first meant clicking this button right
+        after navigating to a frame silently did nothing. With no row
+        selected, this now falls back to the composer behavior for
+        whichever frame the player is currently on (comment_id=None — adds
+        a new comment there), so the button always works immediately
+        without needing a list click first (2026-08-21, per the user's own
+        request)."""
         row = self.table.currentRow()
         if row < 0:
-            return
-        item = self.table.item(row, _COL_COMMENT)
-        if item is None:
-            return
-        frame_index = item.data(Qt.UserRole + 1)
-        if frame_index is None:
             frame_index = self._current_frame_index
-        comment_id = item.data(Qt.UserRole)
-        text, ok = QInputDialog.getText(self, "Edit Comment", "Comment:", text=item.text())
+            comment_id = None
+            current_text = ""
+        else:
+            item = self.table.item(row, _COL_COMMENT)
+            if item is None:
+                return
+            frame_index = item.data(Qt.UserRole + 1)
+            if frame_index is None:
+                frame_index = self._current_frame_index
+            comment_id = item.data(Qt.UserRole)
+            current_text = item.text()
+        text, ok = QInputDialog.getText(self, "Edit Comment", "Comment:", text=current_text)
         if not ok:
             return
         self._apply_comment_text(frame_index, comment_id, text.strip())
