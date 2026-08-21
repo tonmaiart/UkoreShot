@@ -78,7 +78,23 @@ class CommentEditor(QDialog):
         self.viewer_group: QGroupBox = find(QGroupBox, "groupBox_playblast_viewer")
         self.table: QTableWidget = find(QTableWidget, "tableWidget")
         self.save_button: QPushButton = find(QPushButton, "pushButton_save_comment")
-        self.cancel_button: QPushButton = find(QPushButton, "pushButton_cancel_comment")
+        # objectName is "pushButton_2" in CommentEditor.ui, not
+        # "pushButton_cancel_comment" — a Qt Designer auto-generated name
+        # (the button was likely re-added/re-dragged in Designer, resetting
+        # it) rather than something to rely on staying stable; matched to
+        # whatever the .ui file currently has, same as every other find()
+        # call here, rather than assuming a descriptive name that isn't
+        # actually there.
+        self.cancel_button: QPushButton = find(QPushButton, "pushButton_2")
+
+        for _name, _widget in [
+            ("groupBox_playblast_viewer", self.viewer_group),
+            ("tableWidget", self.table),
+            ("pushButton_save_comment", self.save_button),
+            ("pushButton_2", self.cancel_button),
+        ]:
+            if _widget is None:
+                _logger.error("CommentEditor.ui has no widget named %r — findChild returned None", _name)
 
         self.player_widget = PlayerWidget(show_edit_tools=True)
         self.player_widget.frameIndexChanged.connect(self._on_frame_index_changed)

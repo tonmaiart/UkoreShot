@@ -169,4 +169,10 @@ revived in-house; see `../interface/README.md`.)
   is the only Discord-side caller:
   compresses (into a fresh temp dir it cleans up afterward, success or
   failure) only when the video's already over the configured limit, then
-  sends whichever path (original or co
+  sends whichever path (original or compressed) actually ends up under it.
+
+**Working here:** stay inside `core/` unless the change needs a new
+top-level `core/` primitive (a genuinely different package, see the naming
+note above) or touches `../maya-scripts/UkorePlayblast/`'s matching
+`_resolve_video_root` (read-only from this side — both just happen to
+agree on the same `cache_dir`-derived folder, see `../maya-scripts/README.md`).

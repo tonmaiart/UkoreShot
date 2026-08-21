@@ -49,7 +49,6 @@ _ICONS_DIR = Path(__file__).resolve().parent.parent / "images"
 _COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_DATE, _COL_TIME_AGO = range(5)
 
 _SORT_NAME_ASC = "name_asc"
-_SORT_NAME_DESC = "name_desc"
 _SORT_OLDEST = "oldest"
 _SORT_NEWEST = "newest"
 _DEFAULT_SORT = _SORT_NEWEST
@@ -162,7 +161,6 @@ class UkoreShotPage(QWidget):
         self.search_edit: QLineEdit = find(QLineEdit, "lineEdit_search_bar")
         self.reload_button: QPushButton = find(QPushButton, "pushButton_reload")
         self.sort_ascending_button: QPushButton = find(QPushButton, "pushButton_sort_ascending")
-        self.sort_descending_button: QPushButton = find(QPushButton, "pushButton_sort_descending")
         self.sort_oldest_button: QPushButton = find(QPushButton, "pushButton_sort_oldest")
         self.sort_newest_button: QPushButton = find(QPushButton, "pushButton_sort_newest")
         self.comment_button: QPushButton = find(QPushButton, "pushButton_comment")
@@ -177,7 +175,6 @@ class UkoreShotPage(QWidget):
             ("lineEdit_search_bar", self.search_edit),
             ("pushButton_reload", self.reload_button),
             ("pushButton_sort_ascending", self.sort_ascending_button),
-            ("pushButton_sort_descending", self.sort_descending_button),
             ("pushButton_sort_oldest", self.sort_oldest_button),
             ("pushButton_sort_newest", self.sort_newest_button),
             ("pushButton_comment", self.comment_button),
@@ -212,7 +209,6 @@ class UkoreShotPage(QWidget):
         self.search_edit.returnPressed.connect(self._on_search_enter)
         self.reload_button.clicked.connect(self._reload_videos)
         self.sort_ascending_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NAME_ASC))
-        self.sort_descending_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NAME_DESC))
         self.sort_oldest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_OLDEST))
         self.sort_newest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NEWEST))
         self.comment_button.clicked.connect(self._on_edit_comment_clicked)
@@ -311,8 +307,6 @@ class UkoreShotPage(QWidget):
     def _sort_entries(self, entries: list[_LibraryEntry]) -> list[_LibraryEntry]:
         if self._sort_mode == _SORT_NAME_ASC:
             return sorted(entries, key=lambda e: e.stem.lower())
-        if self._sort_mode == _SORT_NAME_DESC:
-            return sorted(entries, key=lambda e: e.stem.lower(), reverse=True)
         if self._sort_mode == _SORT_OLDEST:
             return sorted(entries, key=lambda e: e.mtime)
         return sorted(entries, key=lambda e: e.mtime, reverse=True)  # _SORT_NEWEST, the default
