@@ -7,17 +7,18 @@ of `interface/`'s widget code (and vice versa) — see the top-level
 `../README.md`'s "Structure" section for the full rule.
 
 **Naming note:** `video_path_store.py`'s `from core.exceptions import
-NotFoundError` always means the app's own **top-level** `core/` package
+NotFoundError`, `comment_store.py`'s `from core.store import
+LocalConfigStore`, and `share_sync.py`'s `from core.exceptions import
+ConflictError` all always mean the app's own **top-level** `core/` package
 (`C:\Tonmai\UkoreHub\core\`), never this folder — Python resolves
 `from core...` as an absolute import from the repo root on `sys.path`,
 completely independent of where the importing file itself lives. The two
 packages share a name by coincidence, not relationship; don't assume a
 bare `core.something` import anywhere in this plugin means
-`ukoreshot_plugin.core`. (This folder used to have a second example,
-`comment_store.py`'s `from core.store import LocalConfigStore` — that
-file moved to `cache/plugins/BananaSketch/core/` 2026-08-08 along with the
-rest of the draw/comment editor, and its own README carries the same note
-forward.)
+`ukoreshot_plugin.core`. (`comment_store.py` was briefly gone from this
+folder — moved to `cache/plugins/BananaSketch/core/` on 2026-08-08 along
+with the rest of the draw/comment editor — but came back here 2026-08-20
+when that editor was revived in-house; see `../interface/README.md`.)
 
 ## Files
 
@@ -46,8 +47,58 @@ forward.)
   cross-environment duplication in this codebase exists for). Returns
   `None` for anything that doesn't match — a pre-2026-07-20
   shot/version-subfoldered playblast, or any unrelated file — which
-  `../interface/video_library_page.py`/`filter_sidebar.py` treat as
-  "Unknown" rather than an error or something to hide.
+  `../interface/video_library_page.py` still lists (Name column shows the
+  raw stem either way), it just can't get a generated share code (Mark as
+  Share needs a parsed shot_code/version).
+- `video_sequence.py` — added 2026-08-20: `ensure_sequence(ffmpeg_path,
+  video_path)` lazily extracts a video into a numbered PNG sequence via
+  `ffmpeg -vsync 0` (no-op if `has_sequence()` already finds one — whether
+  from a prior extraction or an old, pre-2026-08-20 Maya-written one, see
+  `../maya-scripts/README.md`), writing into `sequence_dir_for(video_path)`
+  (`video_path.parent / video_path.stem` — the same `<stem>/` folder
+  UkorePlayblast itself used to write into). Reuses
+  `video_compress.py::resolve_ffmpeg_path` directly. **Only ever called
+  from two explicit user actions** in `video_library_page.py`
+  (`pushButton_comment`/`pushButton_mark_as_share`'s handlers) — never from
+  a reload/refresh scan, confirmed with the user specifically so casually
+  browsing the library never costs an ffmpeg call. `probe_fps` parses the
+  " fps," token off ffmpeg's own `-i`-with-no-output stderr dump, same
+  technique `video_compress.py`'s `_probe_duration_seconds` already uses
+  for that stream's `Duration:` line.
+- `comment_store.py` — per-video comment/drawing/share metadata, revived
+  2026-08-20 from git history (commit `f9b3505` in `UkoreHubDev`, before
+  `BananaSketch`'s extraction — see `../interface/README.md`). Now lives at
+  `<sequence_dir>/comments.json` (a `video_sequence.py` extraction folder),
+  not a `<video>.ukoreshot.json` sidecar next to the video file — matches
+  the user's instruction that comment data lives in the same folder as the
+  image sequence. `load`/`save` round-trip `{"frames": {...}, "share":
+  {...}}`; `get_share_state`/`set_share_state` manage the `"share"` block
+  (`is_shared`, `code`, `shared_at`, `frame_count`, `image_format`, `fps` —
+  enough for `share_sync.py` to reconstruct every blob name for a share
+  without ever needing to *list* a bucket). `generate_share_code(shot_code,
+  version)` builds the `{shot_code}_v{version:03d}_{4 hex chars}` label
+  Mark as Share generates once and Copy Clipboard copies as plain text.
+- `share_sync.py` — background R2 push/pull for a shared video, added
+  2026-08-20. `api.cloud_sync` (an already-built `R2JsonSync | None`) is
+  the only sanctioned way a plugin touches R2 — see `plugin-api.md`'s "What's
+  deliberately not re-exported" section; `core.vcs.cloud_sync.R2JsonSync`
+  itself is never imported here. Since `R2JsonSync` has no "list objects"
+  operation, a share code needs a small pointer blob
+  (`ukore_shot/share_codes/<code>.json`, `push_pointer`/`pull_pointer`) to
+  be resolvable at all — it records exactly which
+  project/repo/stem/frame_count/image_format/fps a code maps to, so a
+  puller can reconstruct every frame's exact blob name
+  (`{stem}.{i:05d}.{image_format}`) without ever enumerating the bucket.
+  Three one-shot `QThread`s, same shape as `discord_send_worker.py`'s
+  `DiscordSendWorker`: `ShareUploadWorker` (every frame + `comments.json`,
+  for Mark as Share), `CommentSyncWorker` (just `comments.json`, for
+  `comment_editor.py`'s Save Comment on an already-shared video — the
+  incremental-sync-on-save behavior confirmed with the user), and
+  `PullByCodeWorker` (resolves a pasted code, pulls everything down into
+  `video_root/<stem>/` — `video_library_page.py`'s search-bar Enter-key
+  round-trip). All three swallow `ConflictError` per-file — last-write-wins
+  is correct for a shared asset, same reasoning `launcher.py::_push_asset`
+  already documents for thumbnails/program_icons.
 - `discord_client.py` — the Discord side of the "Send to Discord" button
   (`../interface/player_widget.py`'s `send_discord_button`,
   `sendToDiscordRequested`). `get_channel_id`/`set_channel_id` and

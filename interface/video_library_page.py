@@ -1,56 +1,45 @@
 from __future__ import annotations
 
+import datetime
+import fnmatch
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QFile, QSize, Qt
+from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
-    QButtonGroup,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
+    QAbstractItemView,
+    QApplication,
+    QGroupBox,
+    QLineEdit,
     QMessageBox,
     QPushButton,
-    QToolButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from plugin_api import UICommandService, show_exclusive, wrap_scrollable
-from ukoreshot_plugin.core import discord_client, video_naming, video_path_store
+from core.os_utils import open_in_file_explorer
+from ukoreshot_plugin.core import comment_store, discord_client, video_naming, video_path_store, video_sequence
+from ukoreshot_plugin.core.video_compress import VideoCompressionError, compress_to_fit
+from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, push_pointer
+from ukoreshot_plugin.interface.comment_editor import CommentEditor
 from ukoreshot_plugin.interface.discord_send_worker import DiscordSendWorker
-from ukoreshot_plugin.interface.filter_sidebar import FilterSidebar
-from ukoreshot_plugin.interface.flow_layout import FlowLayout
 from ukoreshot_plugin.interface.player_widget import PlayerWidget
 from ukoreshot_plugin.interface.thumbnail_loader import ThumbnailLoader
 
+_UI_FILE = Path(__file__).resolve().parent / "UkoreShotPage.ui"
 _VIDEO_EXTENSIONS = {".mov", ".mp4", ".avi"}
-_UNKNOWN = "Unknown"
-# Must match core/theme.py's QFrame#videoCard border-radius so the painted
-# thumbnail's clip path lines up with the QSS-drawn card border.
-_CARD_CORNER_RADIUS = 6.0
+_ICON_SIZE = QSize(96, 60)
 
-# This plugin's own images/ folder, not the shared data/icons/ every other
-# plugin uses — same _ICONS_DIR convention as player_widget.py (one parent
-# up from this file is UkoreShot/ itself). Icon-setting reuses
-# PlayerWidget._set_button_icon (imported below) instead of duplicating it.
-_ICONS_DIR = Path(__file__).resolve().parents[1] / "images"
-_SORT_AZ_ICON_PATH = _ICONS_DIR / "icons8-alphabetical-sorting-50.png"
-_SORT_ZA_ICON_PATH = _ICONS_DIR / "icons8-alphabetical-sorting-2-50.png"
-_SORT_OLDEST_ICON_PATH = _ICONS_DIR / "icons8-time-machine-32.png"
-_SORT_NEWEST_ICON_PATH = _ICONS_DIR / "icons8-delivery-time-32.png"
-_VIEW_SMALL_ICON_PATH = _ICONS_DIR / "icons8-grid-50.png"
-_VIEW_LARGE_ICON_PATH = _ICONS_DIR / "icons8-grid-2-24.png"
+# This plugin's own images/ folder — see player_widget.py's own _ICONS_DIR
+# note for why (not the shared data/icons/ every other plugin uses).
+_ICONS_DIR = Path(__file__).resolve().parent.parent / "images"
 
-# Two view-mode presets (view_small_button/view_large_button, added
-# 2026-07-20) — _VideoCard used to hard-code these as module constants;
-# now takes them as constructor args so switching the toggle can rebuild
-# the grid at a different size.
-_CARD_SIZES = {
-    "small": {"card_width": 110, "thumbnail_height": 52},
-    "large": {"card_width": 170, "thumbnail_height": 84},
-}
-_DEFAULT_CARD_SIZE = "large"
+_COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_DATE, _COL_TIME_AGO = range(5)
 
 _SORT_NAME_ASC = "name_asc"
 _SORT_NAME_DESC = "name_desc"
@@ -58,127 +47,77 @@ _SORT_OLDEST = "oldest"
 _SORT_NEWEST = "newest"
 _DEFAULT_SORT = _SORT_NEWEST
 
-# video_naming.parse_video_filename's dict keys, in filter_sidebar.py's
-# category order — used to build FilterSidebar.set_available_values'
-# input and to test a parsed video against the sidebar's selections in
-# _video_matches_filters.
-_NAMING_FILTER_FIELDS = ["sequence", "shot_code", "variation", "index", "version"]
+# Matches comment_store.generate_share_code's exact output shape
+# ({shot_code}_v{version:03d}_{4 hex chars}) — used by the search bar's
+# Enter-key handler to tell "someone pasted a share code" apart from a
+# plain wildcard search string, without needing a separate dedicated field.
+_SHARE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9]+_v\d{3}_[0-9A-Fa-f]{4}$")
 
 
-def _format_filter_value(field: str, parsed) -> str:
-    """The filter sidebar shows index/version the same zero-padded way
-    they actually appear in the filename (e.g. "003", "v001") rather than
-    plain ints — this formatting must stay identical between
-    _collect_filter_values (building the list of choices) and
-    _video_matches_filters (matching a selection against it), since a
-    selection is compared by exact string."""
-    if parsed is None:
-        return _UNKNOWN
-    value = parsed[field]
-    if field == "index":
-        return "{:03d}".format(value)
-    if field == "version":
-        return "v{:03d}".format(value)
-    return str(value)
+@dataclass
+class _LibraryEntry:
+    """One row in tableWidget_playblast_library. video_path is None for a
+    video that only exists here because it was pulled in by share code
+    (core/share_sync.py's PullByCodeWorker) — no local video file for it at
+    all, only its already-extracted sequence_dir. Every other entry has a
+    real video_path and a sequence_dir that may or may not have been
+    extracted yet (video_sequence.has_sequence)."""
+
+    key: str
+    video_path: Path | None
+    sequence_dir: Path
+    stem: str
+    parsed: dict | None
+    mtime: float
+    share_state: dict
 
 
-class _VideoCard(QFrame):
-    """One clickable card per video, painted with a fill-cropped thumbnail
-    (reusing core/theme.py's card idiom as QFrame#videoCard) — replaces a
-    plain QListWidget IconMode list, which rendered badly (overlapping
-    thumbnails, cut-off text) for anything beyond a small square icon.
-    The thumbnail only fills a fixed-height strip at the top, with the
-    video's relative path underneath as normal child labels, so paintEvent
-    draws the QSS background/border first and only overlays the thumbnail
-    on top of that top strip — no transparent-background trick needed."""
+def _format_time_ago(mtime: float) -> str:
+    delta_seconds = max(0.0, datetime.datetime.now().timestamp() - mtime)
+    if delta_seconds < 60:
+        return "just now"
+    if delta_seconds < 3600:
+        return "{}m ago".format(int(delta_seconds // 60))
+    if delta_seconds < 86400:
+        return "{}h ago".format(int(delta_seconds // 3600))
+    if delta_seconds < 2592000:
+        return "{}d ago".format(int(delta_seconds // 86400))
+    return "{}mo ago".format(int(delta_seconds // 2592000))
 
-    clicked = Signal()
 
-    def __init__(self, video_path: Path, *, video_root: Path, card_width: int, thumbnail_height: int, parent=None):
-        super().__init__(parent)
-        self.video_path = video_path
-        self.setObjectName("videoCard")
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setCursor(Qt.PointingHandCursor)
-        self._pixmap: QPixmap | None = None
-        self._thumbnail_height = thumbnail_height
-
-        self.setFixedWidth(card_width)
-
-        relative = video_path.relative_to(video_root)
-        name_label = QLabel(relative.name)
-        name_label.setWordWrap(True)
-        name_label.setProperty("cardTitle", True)
-
-        folder = str(relative.parent)
-        text_layout = QVBoxLayout()
-        text_layout.setContentsMargins(8, 6, 8, 6)
-        text_layout.setSpacing(2)
-        text_layout.addWidget(name_label)
-        if folder != ".":
-            folder_label = QLabel(folder)
-            folder_label.setProperty("secondary", True)
-            folder_label.setWordWrap(True)
-            text_layout.addWidget(folder_label)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addSpacing(self._thumbnail_height)
-        layout.addLayout(text_layout)
-
-    def set_thumbnail(self, pixmap: QPixmap) -> None:
-        self._pixmap = pixmap
-        self.update()
-
-    def set_selected(self, selected: bool) -> None:
-        self.setProperty("selected", selected)
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if self._pixmap is None:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        # Clip against the whole card's rounded rect (not just the
-        # thumbnail strip) so the top two corners come out rounded to match
-        # the card, while the strip's bottom edge — well below the corner
-        # radius — stays a plain straight line against the text area.
-        clip_path = QPainterPath()
-        clip_path.addRoundedRect(QRectF(self.rect()), _CARD_CORNER_RADIUS, _CARD_CORNER_RADIUS)
-        painter.setClipPath(clip_path)
-        thumb_rect = QRect(0, 0, self.width(), self._thumbnail_height)
-        scaled = self._pixmap.scaled(thumb_rect.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        x = max(0, (scaled.width() - thumb_rect.width()) // 2)
-        y = max(0, (scaled.height() - thumb_rect.height()) // 2)
-        painter.drawPixmap(thumb_rect, scaled, QRect(x, y, thumb_rect.width(), thumb_rect.height()))
-        painter.end()
-
-    def mousePressEvent(self, event) -> None:
-        self.clicked.emit()
-        super().mousePressEvent(event)
+def _wildcard_match(pattern: str, text: str) -> bool:
+    """Plain typing (no "*"/"?") behaves like the old substring search —
+    wrapped as "*text*" first — while a real wildcard pattern is used as
+    typed. Matched against the lowercased text the same way the old
+    substring check compared against a lowercased relative path."""
+    if not pattern:
+        return True
+    if "*" not in pattern and "?" not in pattern:
+        pattern = "*{}*".format(pattern)
+    return fnmatch.fnmatch(text.lower(), pattern.lower())
 
 
 class UkoreShotPage(QWidget):
-    """The UkoreShot sidebar tab's page — a plain PlayerWidget (top half,
-    playback only — no drawing/comment capability of its own at all;
-    "Edit Comment" opens BananaSketch instead, a separate plugin, via
-    `UICommandService.navigate_and_focus` — see `set_host`/
-    `_on_edit_comment_clicked` and this plugin's own `plugin.py`) plus a
-    video library (bottom half) for picking which video to play.
-    `content_layout` gives player_panel/library_panel
-    equal `stretch=1` so the two always split available height 50/50,
-    confirmed with the user 2026-07-20. The library itself is
-    `filter_sidebar` (left, `FilterSidebar` — see that file) next to
-    `library_content` (right: a sort/view controls row, then
-    `cards_layout`, a `FlowLayout` wrapping grid of `_VideoCard`s that
-    scrolls vertically). Implements the standard set_repo() page protocol
-    (interface/main_window.py's _apply_to_current_page/_set_active_repo)
-    so it re-resolves its video root whenever the active repo changes or
-    this tab regains focus."""
+    """The UkoreShot sidebar tab's page — rebuilt 2026-08-20 against the
+    user's own UkoreShotPage.ui (QUiLoader, same pattern
+    plugins/core/explorer/browser_widget.py and
+    plugins/core/ExternalPluginManager/external_plugins_page.py already use
+    in the host app — the .ui only supplies layout/widget identity, not
+    behavior, same convention those two follow). groupBox_playblast_viewer
+    gets a PlayerWidget inserted at runtime; tableWidget_playblast_library
+    (Thumbnail/Name/Shared/Date/Time Ago) replaces the old FlowLayout card
+    grid + FilterSidebar entirely — confirmed with the user this round that
+    per-category filtering is retired in favor of just the wildcard search
+    bar + sort buttons this .ui actually has.
+
+    Video->image-sequence splitting is lazy (core/video_sequence.py),
+    triggered only from pushButton_comment/pushButton_mark_as_share's own
+    handlers — never from a reload/refresh scan, per the user's explicit
+    "don't convert every video just from browsing" instruction. The old
+    BananaSketch hand-off for Edit Comment is gone — pushButton_comment (via
+    PlayerWidget.editCommentRequested) now opens the in-house CommentEditor
+    directly (see comment_editor.py), reviving the draw/comment system that
+    was extracted out of this plugin on 2026-08-08."""
 
     def __init__(self, parent=None, *, api):
         super().__init__(parent)
@@ -186,162 +125,76 @@ class UkoreShotPage(QWidget):
         self._project_id: str | None = None
         self._repo_id: str | None = None
         self._video_root: Path | None = None
-        self._all_videos: list[Path] = []
-        self._parsed_by_video: dict[Path, dict | None] = {}
-        self._cards: dict[str, _VideoCard] = {}
-        self._selected_card: _VideoCard | None = None
-        # Survives _clear_cards' teardown (unlike _selected_card, a
-        # per-rebuild widget reference) so a filter/sort/view-size change
-        # can restore the same video's selection instead of losing it —
-        # see _restore_or_default_selection.
-        self._selected_video_path: Path | None = None
-        self._discord_worker: DiscordSendWorker | None = None
-        # Set once via set_host (plugin.py's _wire, called at app startup)
-        # — the UICommandService this page uses to open BananaSketch for
-        # Edit Comment (see _on_edit_comment_clicked). None only in the
-        # brief window before wiring runs, which no user-triggered code
-        # path can reach in practice.
-        self._host: UICommandService | None = None
+        self._entries_by_key: dict[str, _LibraryEntry] = {}
+        self._selected_key: str | None = None
         self._sort_mode = _DEFAULT_SORT
-        self._card_size_mode = _DEFAULT_CARD_SIZE
+        self._discord_worker: DiscordSendWorker | None = None
+        self._share_worker: ShareUploadWorker | None = None
+        self._pull_worker: PullByCodeWorker | None = None
         self._thumbnail_loader = ThumbnailLoader(self)
         self._thumbnail_loader.thumbnailReady.connect(self._on_thumbnail_ready)
 
-        self.empty_label = QLabel("Select a repo to see this information.")
-        self.empty_label.setWordWrap(True)
+        loader = QUiLoader()
+        ui_file = QFile(str(_UI_FILE))
+        ui_file.open(QFile.ReadOnly)
+        self.ui = loader.load(ui_file, self)
+        ui_file.close()
 
-        self.filter_sidebar = FilterSidebar()
-        self.filter_sidebar.filtersChanged.connect(self._apply_filter)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.ui)
 
-        # Wrapping grid — FlowLayout packs cards left-to-right and wraps to
-        # a new row once it runs out of width, so the strip grows downward
-        # (vertical scroll) instead of sideways.
-        self.cards_container = QWidget()
-        self.cards_layout = FlowLayout(self.cards_container, spacing=8)
-        self.cards_scroll = wrap_scrollable(self.cards_container)
-        self.cards_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        find = self.ui.findChild
+        self.viewer_group: QGroupBox = find(QGroupBox, "groupBox_playblast_viewer")
+        self.table: QTableWidget = find(QTableWidget, "tableWidget_playblast_library")
+        self.search_edit: QLineEdit = find(QLineEdit, "lineEdit_search_bar")
+        self.reload_button: QPushButton = find(QPushButton, "pushButton_reload")
+        self.sort_ascending_button: QPushButton = find(QPushButton, "pushButton_sort_ascending")
+        self.sort_descending_button: QPushButton = find(QPushButton, "pushButton_sort_descending")
+        self.sort_oldest_button: QPushButton = find(QPushButton, "pushButton_sort_oldest")
+        self.sort_newest_button: QPushButton = find(QPushButton, "pushButton_sort_newest")
+        self.comment_button: QPushButton = find(QPushButton, "pushButton_comment")
+        self.mark_as_share_button: QPushButton = find(QPushButton, "pushButton_mark_as_share")
+        self.copy_clipboard_button: QPushButton = find(QPushButton, "pushButton_copy_clipboard")
+        self.get_format_video_button: QPushButton = find(QPushButton, "pushButton_get_format_video")
+        self.auto_send_discord_button: QPushButton = find(QPushButton, "pushButton_auto_send_to_discord")
 
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self._reload_videos)
-        self.list_empty_label = QLabel("No videos found yet.")
-        self.list_empty_label.setWordWrap(True)
-        self.list_empty_label.setProperty("secondary", True)
-
-        # Sort buttons (added 2026-07-20 per the user's own request) —
-        # four checkable QToolButtons in one exclusive QButtonGroup rather
-        # than a QComboBox, matching "ปุ่ม sort by a-z, z-a, oldest, newest"
-        # (explicitly "buttons") literally. QToolButton (not QPushButton)
-        # so core/theme.py's existing QToolButton:checked rule (accent
-        # background) shows which single choice is active, same as
-        # player_widget.py's brush/eraser/text toolbox — added 2026-08-03
-        # per the user's own request for a colored toggle state.
-        self.sort_az_button = QToolButton()
-        PlayerWidget._set_button_icon(self.sort_az_button, _SORT_AZ_ICON_PATH, "A-Z")
-        self.sort_za_button = QToolButton()
-        PlayerWidget._set_button_icon(self.sort_za_button, _SORT_ZA_ICON_PATH, "Z-A")
-        self.sort_oldest_button = QToolButton()
-        PlayerWidget._set_button_icon(self.sort_oldest_button, _SORT_OLDEST_ICON_PATH, "Oldest")
-        self.sort_newest_button = QToolButton()
-        PlayerWidget._set_button_icon(self.sort_newest_button, _SORT_NEWEST_ICON_PATH, "Newest")
-        self._sort_buttons = {
-            _SORT_NAME_ASC: self.sort_az_button,
-            _SORT_NAME_DESC: self.sort_za_button,
-            _SORT_OLDEST: self.sort_oldest_button,
-            _SORT_NEWEST: self.sort_newest_button,
-        }
-        self._sort_button_group = QButtonGroup(self)
-        self._sort_button_group.setExclusive(True)
-        for mode, button in self._sort_buttons.items():
-            button.setCheckable(True)
-            self._sort_button_group.addButton(button)
-            button.clicked.connect(lambda checked, m=mode: self._set_sort_mode(m))
-        self._sort_buttons[_DEFAULT_SORT].setChecked(True)
-
-        # View-mode (thumbnail size) buttons — same exclusive-button-group
-        # shape as the sort buttons above, per the user's own "ปุ่ม view
-        # แบบต่างๆ เช่น thumbnail เล็ก, thumbnail ใหญ่" request. QToolButton
-        # for the same checked-color reasoning as the sort buttons.
-        self.view_small_button = QToolButton()
-        PlayerWidget._set_button_icon(self.view_small_button, _VIEW_SMALL_ICON_PATH, "Small")
-        self.view_large_button = QToolButton()
-        PlayerWidget._set_button_icon(self.view_large_button, _VIEW_LARGE_ICON_PATH, "Large")
-        self._view_buttons = {"small": self.view_small_button, "large": self.view_large_button}
-        self._view_button_group = QButtonGroup(self)
-        self._view_button_group.setExclusive(True)
-        for mode, button in self._view_buttons.items():
-            button.setCheckable(True)
-            self._view_button_group.addButton(button)
-            button.clicked.connect(lambda checked, m=mode: self._set_card_size_mode(m))
-        self._view_buttons[_DEFAULT_CARD_SIZE].setChecked(True)
-
-        controls_row = QHBoxLayout()
-        controls_row.addWidget(self.refresh_button)
-        controls_row.addWidget(self.sort_az_button)
-        controls_row.addWidget(self.sort_za_button)
-        controls_row.addWidget(self.sort_oldest_button)
-        controls_row.addWidget(self.sort_newest_button)
-        controls_row.addStretch()
-        controls_row.addWidget(self.view_small_button)
-        controls_row.addWidget(self.view_large_button)
-
-        self.library_title = QLabel("Playblast Library")
-        self.library_title.setObjectName("ukoreShotSectionTitle")
-
-        # filter_sidebar now lays out its six categories in a horizontal
-        # row (see filter_sidebar.py) and sits as its own row above
-        # controls_row (changed 2026-08-03 per the user's own request) —
-        # library_panel used to be an HBox split between filter_sidebar
-        # (left) and this content (right); that split is gone, everything
-        # is one vertical stack now.
-        library_panel = QWidget()
-        library_panel_layout = QVBoxLayout(library_panel)
-        library_panel_layout.setContentsMargins(0, 0, 0, 0)
-        library_panel_layout.addWidget(self.library_title)
-        library_panel_layout.addWidget(self.filter_sidebar)
-        library_panel_layout.addLayout(controls_row)
-        library_panel_layout.addWidget(self.cards_scroll, stretch=1)
-        library_panel_layout.addWidget(self.list_empty_label)
-
-        # Edit Comment lives inside PlayerWidget itself as a square icon
-        # button — PlayerWidget tracks its own enabled state
-        # (load_video/clear_video) since it already knows whether a video
-        # is loaded; this page just needs to know *which* video to open
-        # when the signal fires, via _selected_card (set in _select_card,
-        # always alongside load_video), and now (2026-08-08) opens
-        # BananaSketch via UICommandService.navigate_and_focus instead of an
-        # in-app EditVideoDialog — see set_host/_on_edit_comment_clicked.
+        # Player lives inside the .ui's own empty placeholder groupbox —
+        # same "insert a real widget into a Designer-authored empty
+        # QGroupBox at runtime" convention groupBox_playblast_viewer in
+        # comment_editor.py's CommentEditor.ui also uses.
         self.player_widget = PlayerWidget()
         self.player_widget.editCommentRequested.connect(self._on_edit_comment_clicked)
         self.player_widget.sendToDiscordRequested.connect(self._on_send_discord_clicked)
+        viewer_layout = QVBoxLayout(self.viewer_group)
+        viewer_layout.setContentsMargins(4, 16, 4, 4)
+        viewer_layout.addWidget(self.player_widget)
 
-        self.player_title = QLabel("Playblast Viewer")
-        self.player_title.setObjectName("ukoreShotSectionTitle")
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["", "Name", "Shared", "Date", "Time Ago"])
+        self.table.setIconSize(_ICON_SIZE)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.itemSelectionChanged.connect(self._on_row_selected)
 
-        player_panel = QWidget()
-        player_layout = QVBoxLayout(player_panel)
-        player_layout.setContentsMargins(0, 0, 0, 0)
-        player_layout.addWidget(self.player_title)
-        player_layout.addWidget(self.player_widget, stretch=1)
+        self.search_edit.textChanged.connect(self._apply_filter)
+        self.search_edit.returnPressed.connect(self._on_search_enter)
+        self.reload_button.clicked.connect(self._reload_videos)
+        self.sort_ascending_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NAME_ASC))
+        self.sort_descending_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NAME_DESC))
+        self.sort_oldest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_OLDEST))
+        self.sort_newest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NEWEST))
+        self.comment_button.clicked.connect(self._on_edit_comment_clicked)
+        self.mark_as_share_button.clicked.connect(self._on_mark_as_share_clicked)
+        self.copy_clipboard_button.clicked.connect(self._on_copy_clipboard_clicked)
+        self.get_format_video_button.clicked.connect(self._on_get_format_video_clicked)
+        self.auto_send_discord_button.clicked.connect(self._on_send_discord_clicked)
+        self.copy_clipboard_button.setEnabled(False)
 
-        self.content_widget = QWidget()
-        content_layout = QVBoxLayout(self.content_widget)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.addWidget(player_panel, stretch=1)
-        content_layout.addWidget(library_panel, stretch=1)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.empty_label)
-        layout.addWidget(self.content_widget)
-
-        self._update_empty_state()
+        self._update_button_states()
 
     # -- standard page protocol -------------------------------------------
-
-    def set_host(self, host: UICommandService) -> None:
-        """Called once from plugin.py's _wire (SectionSpec.wire, run at app
-        startup) — see _on_edit_comment_clicked for the one thing this
-        page uses it for."""
-        self._host = host
 
     def set_repo(self, project, repo, workspace_root: str) -> None:
         self._project_id = project.id if project is not None else None
@@ -350,170 +203,381 @@ class UkoreShotPage(QWidget):
 
     # -- video list ---------------------------------------------------------
 
+    def _resolve_ffmpeg(self) -> str | None:
+        try:
+            return video_sequence.resolve_ffmpeg_path(discord_client.get_ffmpeg_path(self._api))
+        except VideoCompressionError as exc:
+            QMessageBox.warning(self, "ffmpeg Required", str(exc))
+            return None
+
     def _reload_videos(self) -> None:
-        self._clear_cards()
-        self.player_widget.clear_video()
-        # A genuine repo switch (or the tab regaining focus, which also
-        # calls set_repo -> _reload_videos) means whatever was selected no
-        # longer applies — clearing this here (unlike a plain
-        # filter/sort/view-size change, which goes through _apply_filter
-        # alone and should keep the current selection) is what makes
-        # _restore_or_default_selection fall back to the latest video, per
-        # the user's own request that opening the tab always default to
-        # the most recent playblast.
-        self._selected_video_path = None
+        self._selected_key = None
         self._video_root = None
-        self._all_videos = []
-        self._parsed_by_video = {}
+        self._entries_by_key = {}
         if self._project_id and self._repo_id:
             self._video_root = video_path_store.resolve_video_root(self._api, self._project_id, self._repo_id)
         self._update_empty_state()
         if self._video_root is None or not self._video_root.is_dir():
-            self.filter_sidebar.set_available_values({})
+            self._apply_filter()
             return
 
-        # Recursive: a video flat-named under UkorePlayblast's 2026-07-20
-        # naming convention lives directly in video_root, but an older
-        # playblast from before that date may still sit nested under its
-        # own <sequence>/<shot_code>/vNNN/ subfolder (left alone there per
-        # the user's own decision — see UkorePlayblast/README.md) — both
-        # need to show up here.
-        self._all_videos = [
+        # Recursive: a video flat-named under UkorePlayblast's naming
+        # convention lives directly in video_root, but an older playblast
+        # may still sit nested under its own <sequence>/<shot_code>/vNNN/
+        # subfolder (left alone there per the user's own decision — see
+        # maya-scripts/README.md) — both need to show up here.
+        video_paths = [
             p for p in self._video_root.rglob("*") if p.is_file() and p.suffix.lower() in _VIDEO_EXTENSIONS
         ]
-        for video_path in self._all_videos:
-            self._parsed_by_video[video_path] = video_naming.parse_video_filename(video_path)
+        stems_with_video = {p.stem for p in video_paths}
+        for video_path in video_paths:
+            sequence_dir = video_sequence.sequence_dir_for(video_path)
+            entry = _LibraryEntry(
+                key=str(video_path),
+                video_path=video_path,
+                sequence_dir=sequence_dir,
+                stem=video_path.stem,
+                parsed=video_naming.parse_video_filename(video_path),
+                mtime=video_path.stat().st_mtime,
+                share_state=comment_store.get_share_state(sequence_dir),
+            )
+            self._entries_by_key[entry.key] = entry
 
-        self.filter_sidebar.set_available_values(self._collect_filter_values())
-        self._apply_filter()
-
-    def _collect_filter_values(self) -> dict:
-        """{"sequence": [...], "shot_code": [...], ...} — every distinct
-        value currently present across `_all_videos`, for
-        `filter_sidebar.set_available_values`. A video that doesn't parse
-        under the naming convention contributes "Unknown" to every
-        video_naming-derived category instead of being left out. No more
-        "commenter" category (dropped 2026-08-08 — comment_store.py, its
-        data source, moved to cache/plugins/BananaSketch/ along with the
-        rest of the draw/comment editor; this plugin no longer reads
-        comment data at all)."""
-        values = {field: set() for field in _NAMING_FILTER_FIELDS}
-        for video_path in self._all_videos:
-            parsed = self._parsed_by_video.get(video_path)
-            for field in _NAMING_FILTER_FIELDS:
-                values[field].add(_format_filter_value(field, parsed))
-        return {key: _sort_with_unknown_last(v) for key, v in values.items()}
-
-    def _clear_cards(self) -> None:
-        for card in self._cards.values():
-            card.setParent(None)
-            card.deleteLater()
-        self._cards = {}
-        self._selected_card = None
-
-    def _video_matches_filters(self, video_path: Path) -> bool:
-        search = self.filter_sidebar.search_text()
-        if search and search not in str(video_path.relative_to(self._video_root)).lower():
-            return False
-        parsed = self._parsed_by_video.get(video_path)
-        for field in _NAMING_FILTER_FIELDS:
-            selected = self.filter_sidebar.selected_values(field)
-            if not selected:
+        # Sequence-only entries: a <stem>/comments.json with no matching
+        # local video file — arrived purely via a pasted share code
+        # (core/share_sync.py's PullByCodeWorker). Never triggers
+        # ensure_sequence — just reflects what's already on disk.
+        for metadata_path in self._video_root.rglob("comments.json"):
+            sequence_dir = metadata_path.parent
+            if sequence_dir.name in stems_with_video:
                 continue
-            if _format_filter_value(field, parsed) not in selected:
-                return False
-        return True
+            entry = _LibraryEntry(
+                key=str(sequence_dir),
+                video_path=None,
+                sequence_dir=sequence_dir,
+                stem=sequence_dir.name,
+                parsed=video_naming.parse_video_filename(Path(sequence_dir.name)),
+                mtime=metadata_path.stat().st_mtime,
+                share_state=comment_store.get_share_state(sequence_dir),
+            )
+            self._entries_by_key[entry.key] = entry
 
-    def _sort_videos(self, videos: list[Path]) -> list[Path]:
-        if self._sort_mode == _SORT_NAME_ASC:
-            return sorted(videos, key=lambda p: str(p.relative_to(self._video_root)).lower())
-        if self._sort_mode == _SORT_NAME_DESC:
-            return sorted(videos, key=lambda p: str(p.relative_to(self._video_root)).lower(), reverse=True)
-        if self._sort_mode == _SORT_OLDEST:
-            return sorted(videos, key=lambda p: p.stat().st_mtime)
-        return sorted(videos, key=lambda p: p.stat().st_mtime, reverse=True)  # _SORT_NEWEST, the default
+        self._apply_filter()
 
     def _set_sort_mode(self, mode: str) -> None:
         self._sort_mode = mode
         self._apply_filter()
 
-    def _set_card_size_mode(self, mode: str) -> None:
-        self._card_size_mode = mode
-        self._apply_filter()
+    def _sort_entries(self, entries: list[_LibraryEntry]) -> list[_LibraryEntry]:
+        if self._sort_mode == _SORT_NAME_ASC:
+            return sorted(entries, key=lambda e: e.stem.lower())
+        if self._sort_mode == _SORT_NAME_DESC:
+            return sorted(entries, key=lambda e: e.stem.lower(), reverse=True)
+        if self._sort_mode == _SORT_OLDEST:
+            return sorted(entries, key=lambda e: e.mtime)
+        return sorted(entries, key=lambda e: e.mtime, reverse=True)  # _SORT_NEWEST, the default
 
     def _apply_filter(self) -> None:
-        self._clear_cards()
-        if self._video_root is None:
-            return
-        videos = self._sort_videos([p for p in self._all_videos if self._video_matches_filters(p)])
-        size = _CARD_SIZES[self._card_size_mode]
-        for video_path in videos:
-            card = _VideoCard(video_path, video_root=self._video_root, parent=self.cards_container, **size)
-            card.clicked.connect(lambda c=card: self._select_card(c))
-            self.cards_layout.addWidget(card)
-            self._cards[str(video_path)] = card
-            self._thumbnail_loader.request(video_path)
-        self.list_empty_label.setVisible(not videos)
-        self.cards_scroll.setVisible(bool(videos))
-        self._restore_or_default_selection(videos)
+        search = self.search_edit.text().strip()
+        entries = [e for e in self._entries_by_key.values() if _wildcard_match(search, e.stem)]
+        entries = self._sort_entries(entries)
 
-    def _restore_or_default_selection(self, videos: list[Path]) -> None:
-        """Keeps whichever video was already selected across a filter/sort/
-        view-size rebuild (_clear_cards always tears down and recreates
-        every _VideoCard) if it's still in the current list; otherwise —
-        most notably right after _reload_videos' first load for a newly
-        opened/refocused repo, which resets _selected_video_path to None —
-        falls back to the most recently modified video, so opening the
-        UkoreShot tab always shows the latest playblast by default, per
-        the user's own request, independent of whatever sort mode happens
-        to be active."""
-        if not videos:
-            self._selected_video_path = None
+        self.table.setRowCount(len(entries))
+        for row, entry in enumerate(entries):
+            name_item = QTableWidgetItem(entry.stem)
+            name_item.setData(Qt.UserRole, entry.key)
+            self.table.setItem(row, _COL_THUMBNAIL, QTableWidgetItem())
+            self.table.setItem(row, _COL_NAME, name_item)
+            shared_item = QTableWidgetItem("Shared" if entry.share_state["is_shared"] else "—")
+            self.table.setItem(row, _COL_SHARED, shared_item)
+            date_text = datetime.datetime.fromtimestamp(entry.mtime).strftime("%Y-%m-%d %H:%M")
+            self.table.setItem(row, _COL_DATE, QTableWidgetItem(date_text))
+            self.table.setItem(row, _COL_TIME_AGO, QTableWidgetItem(_format_time_ago(entry.mtime)))
+            self._request_thumbnail(entry)
+
+        self._restore_or_default_selection(entries)
+
+    def _request_thumbnail(self, entry: _LibraryEntry) -> None:
+        if entry.video_path is not None:
+            self._thumbnail_loader.request(entry.video_path)
             return
-        target = self._selected_video_path
-        if target is None or target not in videos:
-            target = max(videos, key=lambda p: p.stat().st_mtime)
-        card = self._cards.get(str(target))
-        if card is not None:
-            self._select_card(card)
+        # Sequence-only entry — no video file to decode a frame from, load
+        # its own first frame directly instead.
+        frames = sorted(p for p in entry.sequence_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"})
+        if not frames:
+            return
+        image = QImage(str(frames[0]))
+        if not image.isNull():
+            self._set_row_thumbnail(entry.key, QPixmap.fromImage(image))
 
     def _on_thumbnail_ready(self, video_path_str: str, pixmap: QPixmap) -> None:
-        card = self._cards.get(video_path_str)
-        if card is not None:
-            card.set_thumbnail(pixmap)
+        self._set_row_thumbnail(video_path_str, pixmap)
+
+    def _set_row_thumbnail(self, key: str, pixmap: QPixmap) -> None:
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, _COL_NAME)
+            if item is not None and item.data(Qt.UserRole) == key:
+                thumb_item = self.table.item(row, _COL_THUMBNAIL)
+                if thumb_item is not None:
+                    thumb_item.setIcon(QIcon(pixmap.scaled(_ICON_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                return
+
+    def _restore_or_default_selection(self, entries: list[_LibraryEntry]) -> None:
+        """Same "keep the prior selection if it's still visible, else
+        default to the most recent" behavior the old card grid had — see
+        the pre-2026-08-20 version of this method for the original
+        reasoning, unchanged here."""
+        if not entries:
+            self._selected_key = None
+            self.player_widget.clear_video()
+            self._update_button_states()
+            return
+        target_key = self._selected_key
+        if target_key is None or target_key not in {e.key for e in entries}:
+            target_key = max(entries, key=lambda e: e.mtime).key
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, _COL_NAME)
+            if item is not None and item.data(Qt.UserRole) == target_key:
+                self.table.blockSignals(True)
+                self.table.selectRow(row)
+                self.table.blockSignals(False)
+                break
+        self._selected_key = target_key
+        self._load_selected_entry()
+
+    def _on_row_selected(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            self._selected_key = None
+            self.player_widget.clear_video()
+        else:
+            item = self.table.item(row, _COL_NAME)
+            self._selected_key = item.data(Qt.UserRole) if item is not None else None
+            self._load_selected_entry()
+        self._update_button_states()
+
+    def _load_selected_entry(self) -> None:
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        if entry is None:
+            self.player_widget.clear_video()
+            return
+        if entry.video_path is not None:
+            self.player_widget.load_video(entry.video_path)
+        else:
+            self.player_widget.load_sequence(entry.sequence_dir)
 
     def _update_empty_state(self) -> None:
-        if not self._project_id or not self._repo_id:
-            self.empty_label.setText("Select a repo to see this information.")
-            show_exclusive(self.empty_label, self.content_widget)
+        # No dedicated empty-state widget in the new .ui (unlike the old
+        # empty_label/content_widget split) — an empty table + a cleared
+        # player already communicate "nothing here yet" on its own.
+        pass
+
+    def _update_button_states(self) -> None:
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        has_selection = entry is not None
+        self.comment_button.setEnabled(has_selection)
+        self.mark_as_share_button.setEnabled(has_selection)
+        self.get_format_video_button.setEnabled(has_selection and entry.video_path is not None)
+        is_shared = has_selection and entry.share_state["is_shared"]
+        self.copy_clipboard_button.setEnabled(bool(is_shared and entry.share_state.get("code")))
+
+    # -- share-code search-bar round-trip -----------------------------------
+
+    def _on_search_enter(self) -> None:
+        text = self.search_edit.text().strip()
+        if not _SHARE_CODE_PATTERN.match(text):
             return
         if self._video_root is None:
-            self.empty_label.setText(
-                "Couldn't access this repo's local video folder — see Repository Setting > UkoreShot."
-            )
-            show_exclusive(self.empty_label, self.content_widget)
             return
-        show_exclusive(self.content_widget, self.empty_label)
+        if any(e.share_state.get("code") == text for e in self._entries_by_key.values()):
+            return  # already local, nothing to pull
+        if self._api.cloud_sync is None:
+            QMessageBox.warning(self, "Cloud Sync Unavailable", "Cloud sync isn't configured on this machine.")
+            return
+        self.search_edit.setEnabled(False)
+        worker = PullByCodeWorker(self._api.cloud_sync, text, video_root=self._video_root, parent=self)
+        worker.succeeded.connect(self._on_pull_by_code_succeeded)
+        worker.not_found.connect(self._on_pull_by_code_not_found)
+        worker.failed.connect(self._on_pull_by_code_failed)
+        worker.finished.connect(worker.deleteLater)
+        self._pull_worker = worker
+        worker.start()
 
-    def _select_card(self, card: _VideoCard) -> None:
-        if self._selected_card is not None:
-            self._selected_card.set_selected(False)
-        card.set_selected(True)
-        self._selected_card = card
-        self._selected_video_path = card.video_path
-        self.player_widget.load_video(card.video_path)
+    def _on_pull_by_code_succeeded(self, stem: str) -> None:
+        self._pull_worker = None
+        self.search_edit.setEnabled(True)
+        self._reload_videos()
+        QMessageBox.information(self, "Video Synced", "Pulled \"{}\" down from the cloud.".format(stem))
+
+    def _on_pull_by_code_not_found(self) -> None:
+        self._pull_worker = None
+        self.search_edit.setEnabled(True)
+        QMessageBox.warning(self, "Not Found", "No shared video was found for that code.")
+
+    def _on_pull_by_code_failed(self, message: str) -> None:
+        self._pull_worker = None
+        self.search_edit.setEnabled(True)
+        QMessageBox.warning(self, "Sync Failed", message)
+
+    # -- comment editor -----------------------------------------------------
+
+    def _ensure_sequence_for(self, entry: _LibraryEntry, ffmpeg_path: str | None = None) -> Path | None:
+        if entry.video_path is None:
+            return entry.sequence_dir
+        if ffmpeg_path is None:
+            ffmpeg_path = self._resolve_ffmpeg()
+            if ffmpeg_path is None:
+                return None
+        try:
+            return video_sequence.ensure_sequence(ffmpeg_path, entry.video_path)
+        except VideoCompressionError as exc:
+            QMessageBox.warning(self, "Sequence Extraction Failed", str(exc))
+            return None
 
     def _on_edit_comment_clicked(self) -> None:
-        if self._selected_card is None or self._host is None:
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        if entry is None:
             return
-        self._host.navigate_and_focus("banana_sketch", self._selected_card.video_path)
+        sequence_dir = self._ensure_sequence_for(entry)
+        if sequence_dir is None:
+            return
+        dialog = CommentEditor(sequence_dir, api=self._api, project_id=self._project_id, repo_id=self._repo_id, parent=self)
+        dialog.exec()
+        self._reload_videos()  # share state may have changed via an incremental sync during the session
+
+    # -- share ---------------------------------------------------------------
+
+    def _on_mark_as_share_clicked(self) -> None:
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        if entry is None or self._project_id is None or self._repo_id is None:
+            return
+        if self._api.cloud_sync is None:
+            QMessageBox.warning(self, "Cloud Sync Unavailable", "Cloud sync isn't configured on this machine.")
+            return
+        if not entry.parsed:
+            QMessageBox.warning(
+                self,
+                "Mark as Share",
+                "This video's filename doesn't match the playblast naming convention, so a share code can't be "
+                "generated for it.",
+            )
+            return
+        ffmpeg_path = None
+        if entry.video_path is not None:
+            ffmpeg_path = self._resolve_ffmpeg()
+            if ffmpeg_path is None:
+                return
+        sequence_dir = self._ensure_sequence_for(entry, ffmpeg_path)
+        if sequence_dir is None:
+            return
+
+        # Write the final share state (code, frame_count, fps, ...) into
+        # comments.json *before* anything uploads — a puller only ever
+        # fetches comments.json + the exact frame_count of frames named off
+        # what the pointer blob says, so both the pointer and the uploaded
+        # comments.json must already agree on this data by the time the
+        # pointer becomes resolvable, or a fresh pull would land with no
+        # share info at all despite the frames having arrived fine.
+        existing_code = entry.share_state.get("code")
+        code = existing_code or comment_store.generate_share_code(entry.parsed["shot_code"], entry.parsed["version"])
+        frame_files = sorted(
+            p for p in sequence_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}
+        )
+        image_format = frame_files[0].suffix.lstrip(".") if frame_files else "png"
+        if entry.video_path is not None and ffmpeg_path is not None:
+            fps = video_sequence.probe_fps(ffmpeg_path, entry.video_path)
+        else:
+            fps = entry.share_state.get("fps") or 24.0
+        comment_store.set_share_state(
+            sequence_dir,
+            is_shared=True,
+            code=code,
+            shared_at=datetime.datetime.now().isoformat(),
+            frame_count=len(frame_files),
+            image_format=image_format,
+            fps=fps,
+        )
+
+        self.mark_as_share_button.setEnabled(False)
+        worker = ShareUploadWorker(
+            self._api.cloud_sync, project_id=self._project_id, repo_id=self._repo_id, sequence_dir=sequence_dir, parent=self
+        )
+        worker.succeeded.connect(
+            lambda: self._on_share_upload_succeeded(code, sequence_dir, len(frame_files), image_format, fps)
+        )
+        worker.failed.connect(lambda message: self._on_share_upload_failed(message, sequence_dir, was_already_shared=bool(existing_code)))
+        worker.finished.connect(worker.deleteLater)
+        self._share_worker = worker
+        worker.start()
+
+    def _on_share_upload_succeeded(self, code: str, sequence_dir: Path, frame_count: int, image_format: str, fps: float) -> None:
+        self._share_worker = None
+        self.mark_as_share_button.setEnabled(True)
+        # Only made discoverable now that every frame + the final
+        # comments.json (already carrying this same share info) has
+        # actually landed — see the ordering note in
+        # _on_mark_as_share_clicked above.
+        push_pointer(
+            self._api.cloud_sync,
+            code,
+            project_id=self._project_id,
+            repo_id=self._repo_id,
+            video_stem=sequence_dir.name,
+            frame_count=frame_count,
+            image_format=image_format,
+            fps=fps,
+        )
+        self._reload_videos()
+        QMessageBox.information(self, "Marked as Share", "Shared. Code: {}".format(code))
+
+    def _on_share_upload_failed(self, message: str, sequence_dir: Path, *, was_already_shared: bool) -> None:
+        self._share_worker = None
+        self.mark_as_share_button.setEnabled(True)
+        if not was_already_shared:
+            # Roll back the optimistic is_shared=True set before the upload
+            # started (see _on_mark_as_share_clicked) — nothing actually
+            # reached the cloud, so the table shouldn't claim it's shared,
+            # and Copy Clipboard shouldn't offer a code that resolves to
+            # nothing.
+            comment_store.set_share_state(sequence_dir, is_shared=False)
+            self._reload_videos()
+        QMessageBox.warning(self, "Share Failed", message)
+
+    def _on_copy_clipboard_clicked(self) -> None:
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        if entry is None:
+            return
+        code = entry.share_state.get("code")
+        if code:
+            QApplication.clipboard().setText(code)
+
+    # -- discord ---------------------------------------------------------------
+
+    def _on_get_format_video_clicked(self) -> None:
+        """Compresses the selected video down to the repo's configured
+        Discord Max Upload Size via ffmpeg and reveals it in the OS file
+        explorer — a manual preview/export step, distinct from Auto Send to
+        Discord Post below (which posts it automatically)."""
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        if entry is None or entry.video_path is None or self._project_id is None or self._repo_id is None:
+            return
+        ffmpeg_path = self._resolve_ffmpeg()
+        if ffmpeg_path is None:
+            return
+        max_upload_bytes = discord_client.get_max_upload_mb(self._api, self._project_id, self._repo_id) * 1024 * 1024
+        try:
+            output_path = compress_to_fit(ffmpeg_path, entry.video_path, max_upload_bytes)
+        except VideoCompressionError as exc:
+            QMessageBox.warning(self, "Get Format Video Failed", str(exc))
+            return
+        open_in_file_explorer(output_path)
 
     def _on_send_discord_clicked(self) -> None:
-        if self._selected_card is None or self._project_id is None or self._repo_id is None:
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        if entry is None or entry.video_path is None or self._project_id is None or self._repo_id is None:
             return
-        video_path = self._selected_card.video_path
-        parsed = self._parsed_by_video.get(video_path)
-        if not parsed:
+        video_path = entry.video_path
+        if not entry.parsed:
             QMessageBox.warning(
                 self,
                 "Send to Discord",
@@ -521,7 +585,7 @@ class UkoreShotPage(QWidget):
                 "determined — Send to Discord needs one to find or create the matching forum post.",
             )
             return
-        shot_title = parsed["shot_code"]
+        shot_title = entry.parsed["shot_code"]
 
         channel_id = discord_client.get_channel_id(self._api, self._project_id, self._repo_id)
         if not channel_id:
@@ -543,6 +607,7 @@ class UkoreShotPage(QWidget):
         max_upload_bytes = discord_client.get_max_upload_mb(self._api, self._project_id, self._repo_id) * 1024 * 1024
         ffmpeg_path = discord_client.get_ffmpeg_path(self._api)
 
+        self.auto_send_discord_button.setEnabled(False)
         self.player_widget.send_discord_button.setEnabled(False)
         self._discord_worker = DiscordSendWorker(
             token,
@@ -561,16 +626,12 @@ class UkoreShotPage(QWidget):
 
     def _on_discord_send_succeeded(self) -> None:
         self._discord_worker = None
-        if self._selected_video_path is not None:
-            self.player_widget.send_discord_button.setEnabled(True)
+        self.auto_send_discord_button.setEnabled(True)
+        self.player_widget.send_discord_button.setEnabled(True)
         QMessageBox.information(self, "Sent to Discord", "Video posted to Discord.")
 
     def _on_discord_send_failed(self, message: str) -> None:
         self._discord_worker = None
-        if self._selected_video_path is not None:
-            self.player_widget.send_discord_button.setEnabled(True)
+        self.auto_send_discord_button.setEnabled(True)
+        self.player_widget.send_discord_button.setEnabled(True)
         QMessageBox.warning(self, "Discord Send Failed", message)
-
-
-def _sort_with_unknown_last(values: set) -> list[str]:
-    return sorted(values - {_UNKNOWN}) + ([_UNKNOWN] if _UNKNOWN in values else [])

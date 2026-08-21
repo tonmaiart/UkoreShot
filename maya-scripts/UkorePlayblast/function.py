@@ -167,6 +167,23 @@ def _finalize_single_frame_image(export_file_path: str, image_format: str) -> st
     return target_path
 
 
+def _locate_video_output(export_file_path: str) -> str:
+    """cmds.playblast's video formats each append their own extension to
+    `filename`, and which exact extension a given format/compression combo
+    actually produces is Maya-version-dependent (e.g. "qt"+"H.264" writes
+    .mp4 on some Maya versions, .mov on others) — glob for whatever Maya
+    actually wrote next to export_file_path rather than assuming, the same
+    don't-assume-the-extension approach _finalize_single_frame_image already
+    uses for image mode. Raises RuntimeError if nothing matches (playblast
+    silently produced no file)."""
+    directory = os.path.dirname(export_file_path)
+    base_name = os.path.basename(export_file_path)
+    candidates = sorted(name for name in os.listdir(directory) if name.startswith(base_name + "."))
+    if not candidates:
+        raise RuntimeError("Maya's playblast did not produce an output file at {}".format(export_file_path))
+    return os.path.join(directory, candidates[0])
+
+
 def resolve_destination_path():
     """Full file path (including extension) the next publish_playblast()
     call would write, without creating anything or running Maya's
@@ -174,8 +191,14 @@ def resolve_destination_path():
     exactly what a playblast right now would produce. Meaningful as a full
     *file* preview (not just a folder, like before 2026-07-20) now that
     the video root is flat and the filename itself is where all the
-    shot/variation/index/version information lives. Raises RuntimeError
-    with the same human-readable reasons publish_playblast() itself would
+    shot/variation/index/version information lives. Video mode's extension
+    here is a best-effort guess from options["format"] alone (there's no
+    file on disk yet to glob, unlike _locate_video_output — Maya's actual
+    written extension for "qt"+"H.264" can differ by Maya version), so the
+    label may show ".qt" where the real saved file ends up ".mp4"/".mov";
+    publish_playblast()'s own printed/in-view message always reflects the
+    real path. Raises RuntimeError with the same human-readable reasons
+    publish_playblast() itself would
     hit."""
     project, repo, _ = repo_paths.get_active_repo()
     if project is None:
@@ -247,7 +270,6 @@ def publish_playblast() -> None:
             }
             cmds.playblast(**playblast_kwargs)
             saved_path = _finalize_single_frame_image(export_file_path, image_format)
-            sequence_saved_dir = None
         else:
             playblast_kwargs = {
                 "filename": export_file_path,
@@ -278,37 +300,10 @@ def publish_playblast() -> None:
                     playblast_kwargs["sound"] = sound_node_name
 
             cmds.playblast(**playblast_kwargs)
-            saved_path = "{}.{}".format(export_file_path, options["format"])
-
-            # Also capture the same range as a numbered image sequence, in a
-            # subfolder named after the video's own stem (a same-named file
-            # and directory can coexist — _matching_versions only inspects
-            # is_file() entries at video_root's top level, so this subfolder
-            # is invisible to version/index scanning, same reasoning a
-            # pre-2026-07-20 shot/version subfolder already relies on). No
-            # ffmpeg or extra dependency — cmds.playblast(format="image", ...)
-            # over a real range (unlike the pinned-to-one-frame is_image
-            # branch above) already writes one file per frame natively. A
-            # failure here doesn't invalidate the video already saved above.
-            sequence_saved_dir = None
-            try:
-                sequence_dir = os.path.join(str(video_root), stem)
-                os.makedirs(sequence_dir, exist_ok=True)
-                sequence_kwargs = dict(playblast_kwargs)
-                sequence_kwargs["filename"] = os.path.join(sequence_dir, stem)
-                sequence_kwargs["format"] = "image"
-                sequence_kwargs["compression"] = options.get("image_format") or "png"
-                sequence_kwargs.pop("sound", None)
-                cmds.playblast(**sequence_kwargs)
-                sequence_saved_dir = sequence_dir
-            except Exception as seq_exc:
-                print("[UkorePlayblast] Image sequence capture failed (video still saved): {}".format(seq_exc))
+            saved_path = _locate_video_output(export_file_path)
 
         print("[UkorePlayblast] Playblast saved: {}".format(saved_path))
         message = "<hl>Playblast saved:</hl> {}".format(saved_path)
-        if sequence_saved_dir:
-            print("[UkorePlayblast] Image sequence saved: {}".format(sequence_saved_dir))
-            message += "<br><hl>Sequence saved:</hl> {}".format(sequence_saved_dir)
         cmds.inViewMessage(amg=message, pos="midCenter", fade=True)
     except Exception as e:
         print("[UkorePlayblast] Playblast failed: {}".format(e))

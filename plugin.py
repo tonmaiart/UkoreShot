@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from plugin_api import CATEGORY_REPO, SectionSpec, SettingsTabSpec, UICommandService
+from plugin_api import CATEGORY_REPO, SectionSpec, SettingsTabSpec
 
 # This plugin lives in its own separate git repo, cloned into
 # cache/plugins/UkoreShot/ rather than under the main app's plugins/
@@ -39,26 +39,24 @@ PLUGIN_ID = "ukore_shot"
 
 # Maya-side playblast tool (maya-scripts/UkorePlayblast/), merged into this
 # plugin 2026-08-20 — previously its own separate "ukore_playblast" plugin.
-# This TOOL_ID is only the maya_launcher_env_bridge contribution/label key
-# (see plugins/repo_internal/maya_launcher/README.md's "contributions"/
-# "labels" shape), unrelated to this plugin's own manifest id above.
-_MAYA_TOOL_ID = "ukore_playblast"
-_MAYA_TOOL_LABEL = "UkorePlayblast"
+# The bridge's tool_id MUST equal a plugin id maya_launcher's own
+# api.plugin_catalog actually discovers this launch (a real manifest.json
+# id) — _prepare_env_and_plugins() gates every contribution/launch_hook on
+# tool_id being both in repo.required_plugin_ids AND in plugin_catalog, not
+# just present in the bridge JSON (see maya_launcher/README.md). A
+# made-up id like the old "ukore_playblast" no longer matches any real
+# plugin now that plugin merged into this one, so it silently never
+# activates — must be this plugin's own manifest id, same reason
+# MayaToolkit's TOOL_ID == "maya_toolkit" and UkoreReferenceEditor's
+# TOOL_ID == "ukore_reference_editor" both equal their own manifest ids.
+_MAYA_TOOL_ID = PLUGIN_ID
+_MAYA_TOOL_LABEL = "UkoreShot"
 _MAYA_ENV_BRIDGE_PLUGIN_ID = "maya_launcher_env_bridge"
 _ANY_VERSION = "*"
 # This plugin's own images/ folder, not the shared data/icons/ every other
 # plugin's SectionSpec.icon_path points at (see images/README.md's own
 # note on this deliberate exception).
 _ICON_PATH = Path(__file__).resolve().parent / "images" / "icons8-video-50.png"
-
-
-def _wire(page: UkoreShotPage, host: UICommandService) -> None:
-    # UkoreShot's own Edit Comment button needs to open BananaSketch
-    # (host.navigate_and_focus("banana_sketch", video_path)) instead of an
-    # in-app dialog now that the draw/comment editor lives in that
-    # separate plugin (moved 2026-08-08) — see
-    # video_library_page.py's _on_edit_comment_clicked.
-    page.set_host(host)
 
 
 def register(api) -> None:
@@ -71,10 +69,16 @@ def register(api) -> None:
     # opted-in repos" behavior asked for — no extra plumbing needed, see
     # launcher.py's section_key_to_plugin_id diffing.
     #
-    # page is constructed once here (not inside page_factory's lambda) so
-    # _wire receives the exact same instance the Sidebar ends up showing —
-    # mirrors plugins/core/submit/plugin.py's own _wire pattern, the
-    # documented example this cross-plugin wiring follows.
+    # No more `wire`/UICommandService hand-off (removed 2026-08-20) — Edit
+    # Comment used to open the separate BananaSketch plugin via
+    # host.navigate_and_focus("banana_sketch", ...); it now opens this
+    # plugin's own in-house CommentEditor directly (see
+    # video_library_page.py's _on_edit_comment_clicked/comment_editor.py),
+    # so UkoreShotPage no longer needs a UICommandService at all. Still
+    # constructed once here rather than inside page_factory's lambda — this
+    # page holds real session state (video list, selected entry, the
+    # background ThumbnailLoader) that must survive a tab switch, not be
+    # rebuilt from scratch every time the Sidebar shows this section again.
     page = UkoreShotPage(api=api)
     api.register_section(
         SectionSpec(
@@ -83,7 +87,6 @@ def register(api) -> None:
             order=50,
             page_factory=lambda: page,
             icon_path=_ICON_PATH,
-            wire=_wire,
         )
     )
     api.register_settings_tab(

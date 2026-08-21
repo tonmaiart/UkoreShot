@@ -27,13 +27,17 @@ everything that mattered (video-root folder, naming convention) and the
 Maya-side tool never had a UkoreHub desktop UI of its own anyway. See
 `maya-scripts/README.md` for that half; its own menu items now register
 directly into `ukore_menu` instead of being wired through `MayaToolkit`
-(see that README's "Menu registration" section). As of 2026-08-08, this
-plugin is
-view-only: the whole draw/comment editor (drawing on a frame, per-frame
-comments, everything that used to live in `EditVideoDialog`) was
-extracted into its own separate plugin, `cache/plugins/BananaSketch/` —
-"Edit Comment" now opens that plugin instead of an in-app dialog (see
-`interface/README.md`'s `video_library_page.py` entry).
+(see that README's "Menu registration" section).
+
+Extracted to its own separate plugin, `cache/plugins/BananaSketch/`, on
+2026-08-08 for the draw/comment editor (drawing on a frame, per-frame
+comments) — brought back **in-house** on 2026-08-20, rebuilt against a new
+user-authored `CommentEditor.ui` (see `interface/README.md`'s
+`comment_editor.py`/`draw_overlay.py` entries). That same rebuild also
+added lazy video->image-sequence conversion and cloud sharing by code (see
+"Sharing" below) and replaced the old card-grid + category filter sidebar
+with a plain table + wildcard search bar, all against a second
+user-authored `UkoreShotPage.ui`.
 
 ## Structure
 
@@ -116,6 +120,41 @@ sync and never shared across machines. See `core/README.md`'s
 `maya-scripts/README.md`'s `function.py` entry for how the Maya-side
 writer resolves the same folder independently (duplicated, not imported —
 `mayapy` has no `PluginAPI` instance to resolve `api.cache_dir` from).
+
+## Sharing (image sequences, share codes, cloud sync)
+
+Added 2026-08-20. A video's `.mp4` is never itself synced anywhere — what
+travels to the cloud (and what `interface/comment_editor.py`'s viewer
+actually draws on) is a lazily-extracted PNG sequence
+(`core/video_sequence.py`, ffmpeg-based, `<video_root>/<stem>/`) plus its
+`comments.json` (`core/comment_store.py`). "Lazily" is load-bearing here —
+confirmed explicitly with the user: browsing the library never triggers an
+extraction; it only happens the first time Comment or Mark as Share is
+clicked for a given video.
+
+"Mark as Share" (`interface/video_library_page.py`'s
+`pushButton_mark_as_share`) uploads that sequence + `comments.json` to
+Cloudflare R2 via `api.cloud_sync` (`core/share_sync.py`'s
+`ShareUploadWorker` — see `plugin-api.md`'s "What's deliberately not
+re-exported" section for why that's the only way a plugin touches R2),
+then generates and persists a `{ShotCode}_v{version}_{4 hex chars}` code
+(`comment_store.generate_share_code`) and pushes a small pointer blob
+(`share_sync.push_pointer`) that makes the code resolvable — `R2JsonSync`
+has no "list objects" operation, so without that pointer nothing could
+ever map a pasted code back to its blobs. "Copy Clipboard" copies that
+code as plain text (there's no web viewer to link to instead).
+
+Pasting that same code into `lineEdit_search_bar` and pressing Enter on a
+*different* machine pulls the sequence + `comments.json` back down
+automatically (`share_sync.PullByCodeWorker`) — the video shows up in the
+table from its pulled sequence alone, with no local `.mp4` ever existing
+for it on that machine. Saving a comment in `comment_editor.py` on a video
+that's already shared also pushes just the updated `comments.json`
+incrementally (`share_sync.CommentSyncWorker`) — confirmed with the user —
+rather than requiring a fresh Mark as Share for every comment.
+
+See `core/README.md`'s `video_sequence.py`/`comment_store.py`/
+`share_sync.py` entries for the full mechanics.
 
 ## Send to Discord
 

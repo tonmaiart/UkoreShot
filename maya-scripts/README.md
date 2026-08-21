@@ -81,9 +81,7 @@ files matching that exact triple via `_FILENAME_PATTERN`, building
 
 - **Video** playblast: always a **new** version (`_next_version` = highest
   existing + 1, or `1`), index always `001` — one clip is the whole
-  version. As of 2026-08-08, a Video playblast also writes a full-range
-  image sequence for the same take — see "Image sequence alongside Video"
-  below.
+  version.
 - **Image (Current Frame)** playblast (see "Current-frame image mode"
   below): reuses whichever version **already exists** for that triple
   (`_latest_version`; creates `v001` if this is the first playblast for it
@@ -121,32 +119,23 @@ the exact `<stem>.<image_format>` this convention expects, rather than
 assuming a specific padding width (not guaranteed stable across Maya
 versions).
 
-### Image sequence alongside Video
+### Image sequence generation moved to the desktop side
 
-Added 2026-08-08, part of a broader move toward frame-accurate review
-tooling (UkoreShot/BananaSketch) that a video container doesn't give
-cheaply. `publish_playblast()`'s Video output branch now runs a *second*
-`cmds.playblast(format="image", ...)` over the same range right after the
-video capture, writing into `<video_root>/<stem>/<stem>.####.<image_format>`
-— a subfolder named exactly after the video's own stem, using whatever
-format `image_format_combo` is set to (that field is no longer
-Image-Current-Frame-only). No ffmpeg or other new dependency — Maya's own
-`format="image"` already writes one numbered file per frame natively when
-the range isn't pinned to a single current frame (unlike the
-current-frame-image branch above). `_matching_versions`' scan only
-inspects `is_file()` entries at `video_root`'s top level, so this
-same-stem subfolder is invisible to it — no naming collision, no change
-needed there. A failure in this second capture is caught separately and
-only logged (`[UkorePlayblast] Image sequence capture failed...`) — it
-never invalidates the video already saved by the first call. Known
-tradeoff: this doubles viewport capture time for Video mode (two full
-passes over the range); not addressed yet.
-
-`../interface/` (the desktop-side video library/player) does **not** read
-these sequence subfolders yet — its library scan is recursive but filters
-to `.mov`/`.mp4`/`.avi`, so it harmlessly ignores the new image files.
-Teaching the desktop side to actually use them is a separate,
-not-yet-scheduled piece.
+Added 2026-08-08, removed again 2026-08-20: Video mode used to run a
+*second* `cmds.playblast(format="image", ...)` capture pass right after the
+video capture, writing a `<video_root>/<stem>/<stem>.####.<image_format>`
+sequence alongside the `.mp4` for frame-accurate review tooling
+(UkoreShot/BananaSketch). Removed after the user confirmed
+image-sequence generation should be `../interface/`'s (the desktop-side
+video library/player's) own responsibility instead — see
+`../core/video_sequence.py` — via ffmpeg, and only **lazily** (the first
+time a video is opened in the Comment editor or Marked as Share), not on
+every playblast whether anyone looks at it or not. This also removes the
+"doubles viewport capture time" tradeoff the old approach had — a Maya
+playblast is a single, plain capture pass again, same as before
+2026-08-08. `publish_playblast()` locates whatever file Maya actually wrote
+via `_locate_video_output` rather than assuming an extension, since "qt"/
+"H.264" doesn't always write the same container across Maya versions.
 
 ### Pre-2026-07-20 shot/version subfolders
 
@@ -247,11 +236,13 @@ plugin's filter sidebar rather than erroring or hiding it.
   `options_store.get_options`, and the destination filename via
   `_resolve_filename_stem` (see "Flat naming convention" above — no more
   per-shot subfolder, `_resolve_video_root` itself ensures the flat
-  `video_root` exists). Video mode's branch also runs a second
-  `cmds.playblast()` pass into a `<stem>/` image-sequence subfolder — see
-  "Image sequence alongside Video" above. `resolve_destination_path()`
-  exposes just the active-repo/scene/options/filename resolution (no
-  `os.makedirs`, no playblast) for `options_dialog.py`'s destination
+  `video_root` exists). `saved_path` is located afterward via
+  `_locate_video_output` (globs for whatever extension Maya actually wrote,
+  doesn't assume one — see "Image sequence generation moved to the desktop
+  side" above for why `format`/`compression` changed to `"qt"`/`"H.264"`).
+  `resolve_destination_path()` exposes just the active-repo/scene/options/
+  filename resolution (no `os.makedirs`, no playblast) for
+  `options_dialog.py`'s destination
   label. Prints `[UkorePlayblast]`-prefixed progress lines to Maya's
   Script Editor/console (start, resolved destination folder + filename,
   options in use, saved path or failure reason) so a playblast run is

@@ -37,23 +37,23 @@ DEFAULT_OPTIONS = {
     "resolution_mode": "render_settings",  # "render_settings" | "custom"
     "width": 1920,
     "height": 1080,
-    # "avi", not the old hardcoded "qt" — fixed 2026-07-19 after a real
-    # "Unable to create a movie file. It may be open by another
-    # application." playblast failure: modern Maya on Windows has no
-    # QuickTime backend at all ("qt" format), so that default (carried
-    # over unchanged from the pre-2026-07-19 hardcoded Quick Playblast)
-    # likely never actually worked on Windows. "avi" needs no external
-    # codec framework. Compression left blank (uncompressed) for the same
-    # reason — a named codec like "H.264" isn't guaranteed to be
-    # installed/available for Maya's AVI writer on every machine, and an
-    # invalid/unavailable one fails with this exact same generic error.
+    # "qt"/"H.264" — reverted 2026-08-20 (was "avi"/"" from 2026-07-19,
+    # after a real "Unable to create a movie file" failure — older Maya on
+    # Windows had no QuickTime backend at all for "qt"). Confirmed with the
+    # user that video-to-image-sequence splitting is now UkoreShot's own
+    # desktop-side job (core/video_sequence.py, ffmpeg-based, lazy — only on
+    # Comment/Mark as Share) rather than something Maya writes alongside the
+    # video, so Maya just needs a normal playable H.264 file again — no
+    # reason to stay on the fallback-workaround "avi" format for that. If
+    # this ever regresses on a given Maya/Windows combo, "avi"/"" is the
+    # known-safe fallback (see git history 2026-07-19 for that incident).
     # Applies to "video" output_mode only — "image" format used to be a
     # third choice here too, but that produced a full-timeline image
     # sequence via Maya's own per-frame numbering, not the deliberate
     # single-current-frame capture the user asked for 2026-07-20; that's
     # now output_mode/image_format below instead, a separate axis.
-    "format": "avi",
-    "compression": "",
+    "format": "qt",
+    "compression": "H.264",
     "quality": 80,
     "percent": 80,
     "frame_range_mode": "current_timeline",  # "current_timeline" | "custom"
