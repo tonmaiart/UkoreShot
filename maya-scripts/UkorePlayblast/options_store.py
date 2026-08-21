@@ -11,12 +11,20 @@ personal/per-machine preference. Moved out of the old shared
 data/plugins/core/ukore_playblast.json blob (every studio repo's options in
 one cloud-synced file, keyed by "<project_id>:<repo_id>") since that file
 requires Google Cloud Storage access this Maya process doesn't have (no
-google-cloud-storage in mayapy's site-packages) — see
-_migrate_from_shared_store below for how an existing repo's saved options
-are carried forward on first access. Constructs the PluginConfigStore
-straight off disk, same pattern every Maya-side module in this codebase
-uses (Maya's Python has no PluginAPI instance) — PublishApi.repo_paths and
-PublishApi.tickets are the established examples."""
+google-cloud-storage in mayapy's site-packages). The one-time
+carry-forward from that old shared blob (previously
+_migrate_from_shared_store, calling PublishApi.repo_paths.find_ukorehub_root)
+was removed 2026-08-21 after a real "no attribute find_ukorehub_root"
+crash on first playblast for any repo with nothing saved yet — that
+function no longer exists on PublishApi.repo_paths, and the GCS-era blob
+it read from is doubly obsolete now that cloud sync moved to R2 anyway (see
+the ukorehub-cloud-sync skill). A repo with no saved
+.ukorehub/ukore_playblast.json just starts from DEFAULT_OPTIONS/
+BUILTIN_VARIATIONS now, same as any other first-time repo. Constructs the
+PluginConfigStore straight off disk, same pattern every Maya-side module in
+this codebase uses (Maya's Python has no PluginAPI instance) —
+PublishApi.repo_paths and PublishApi.tickets are the established
+examples."""
 
 from __future__ import annotations
 
@@ -78,18 +86,13 @@ DEFAULT_OPTIONS = {
 }
 
 
-def _repo_key(project_id, repo_id):
-    return "{}:{}".format(project_id, repo_id)
-
-
 def _sanitize_token(value: str) -> str:
     """Mirrors function.py's own _sanitize_token exactly (small enough,
-    and used by different concerns — storage vs. filename-building — that
+    and used by a different concern — storage vs. filename-building — that
     a shared module would be more ceremony than the two-line function
-    warrants; same reasoning _repo_key above is already duplicated
-    independently in both files for). Strips anything that isn't a
-    letter/digit so a custom variation can never contain the "_" the flat
-    naming convention's stem is split on."""
+    warrants). Strips anything that isn't a letter/digit so a custom
+    variation can never contain the "_" the flat naming convention's stem
+    is split on."""
     return re.sub(r"[^A-Za-z0-9]", "", value) or "x"
 
 
@@ -104,18 +107,6 @@ def _repo_store():
     return PluginConfigStore(repo_path / ".ukorehub" / "ukore_playblast.json")
 
 
-def _migrate_from_shared_store(key: str, project_id, repo_id):
-    """One-time carry-forward for a repo that already had options/variations
-    saved in the old shared data/plugins/core/ukore_playblast.json blob
-    (pre-migration to each repo's own .ukorehub/ folder). Returns None (for
-    _OPTIONS_KEY) or [] (for _VARIATIONS_KEY) if nothing was saved there."""
-    from core.extensibility.config_store import PluginConfigStore
-
-    root = repo_paths.find_ukorehub_root()
-    shared_store = PluginConfigStore(root / "data" / "plugins" / "core" / "ukore_playblast.json")
-    return shared_store.get(key, {}).get(_repo_key(project_id, repo_id))
-
-
 def get_options(project_id, repo_id):
     """DEFAULT_OPTIONS merged with whatever's saved for this repo — every
     field always present, so callers never need a .get() fallback."""
@@ -123,10 +114,7 @@ def get_options(project_id, repo_id):
     if store is None:
         return dict(DEFAULT_OPTIONS)
 
-    saved = store.get(_OPTIONS_KEY)
-    if saved is None:
-        saved = _migrate_from_shared_store(_OPTIONS_KEY, project_id, repo_id) or {}
-        store.set(_OPTIONS_KEY, saved)
+    saved = store.get(_OPTIONS_KEY) or {}
 
     options = dict(DEFAULT_OPTIONS)
     options.update(saved)
@@ -147,10 +135,7 @@ def get_variations(project_id, repo_id):
     saved = []
     store = _repo_store()
     if store is not None:
-        saved = store.get(_VARIATIONS_KEY)
-        if saved is None:
-            saved = _migrate_from_shared_store(_VARIATIONS_KEY, project_id, repo_id) or []
-            store.set(_VARIATIONS_KEY, saved)
+        saved = store.get(_VARIATIONS_KEY) or []
 
     result = list(BUILTIN_VARIATIONS)
     for variation in saved:

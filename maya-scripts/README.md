@@ -176,9 +176,12 @@ plugin's filter sidebar rather than erroring or hiding it.
   lived in a single shared, cloud-synced `data/plugins/core/ukore_playblast.json`
   file (every studio repo's options in one file, keyed
   `"<project_id>:<repo_id>"`) — moved out since that file needs Google
-  Cloud Storage access this Maya process doesn't have; see
-  `_migrate_from_shared_store` for how an existing repo's saved options
-  are carried forward on first access. `"variation"` (this repo's
+  Cloud Storage access this Maya process doesn't have. The one-time
+  carry-forward from that old blob (`_migrate_from_shared_store`) was
+  removed 2026-08-21 after a real crash (`PublishApi.repo_paths` no longer
+  has `find_ukorehub_root`, and the GCS-era blob it read is doubly obsolete
+  now that cloud sync moved to R2) — a repo with nothing saved yet just
+  starts from `DEFAULT_OPTIONS`/`BUILTIN_VARIATIONS`. `"variation"` (this repo's
   currently-selected variation string) and `"output_mode"`/
   `"image_format"` (`"video"` | `"current_frame_image"`, and the image
   format used only in the latter) feed the flat naming convention above.

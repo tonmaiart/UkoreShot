@@ -384,6 +384,8 @@ class UkoreShotPage(QWidget):
                 break
         self._selected_key = target_key
         self._load_selected_entry()
+        self._update_button_states()
+        _logger.debug("_restore_or_default_selection: selected %s", target_key)
 
     def _on_row_selected(self) -> None:
         row = self.table.currentRow()
@@ -470,6 +472,13 @@ class UkoreShotPage(QWidget):
     def _ensure_sequence_for(self, entry: _LibraryEntry, ffmpeg_path: str | None = None) -> Path | None:
         if entry.video_path is None:
             return entry.sequence_dir
+        if video_sequence.has_sequence(entry.video_path):
+            # Already extracted (a prior Comment/Mark as Share, or an old
+            # pre-2026-08-20 Maya-written sequence) — nothing to do, and
+            # crucially no reason to demand ffmpeg be resolvable just to
+            # confirm that. Only actually needed *before* running ffmpeg.
+            _logger.debug("sequence already exists for %s, skipping ffmpeg resolution", entry.video_path)
+            return video_sequence.sequence_dir_for(entry.video_path)
         if ffmpeg_path is None:
             ffmpeg_path = self._resolve_ffmpeg()
             if ffmpeg_path is None:
@@ -518,7 +527,12 @@ class UkoreShotPage(QWidget):
             )
             return
         ffmpeg_path = None
-        if entry.video_path is not None:
+        if entry.video_path is not None and not video_sequence.has_sequence(entry.video_path):
+            # Only need ffmpeg resolvable when an extraction is actually
+            # about to run — same fix as _ensure_sequence_for's own
+            # has_sequence() fast path, applied here too since this method
+            # also calls _resolve_ffmpeg() directly (for the fps probe
+            # below, not just extraction).
             ffmpeg_path = self._resolve_ffmpeg()
             if ffmpeg_path is None:
                 return
