@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 
 from ukoreshot_plugin.core import comment_store, video_naming, video_path_store, video_sequence
 from ukoreshot_plugin.core.video_compress import VideoCompressionError, burn_frame_numbers, compress_to_fit, get_ffmpeg_path
-from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, push_pointer
+from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, generate_unique_share_code, push_pointer
 from ukoreshot_plugin.interface.comment_editor import CommentEditor
 from ukoreshot_plugin.interface.draw_overlay import Stroke, paint_stroke_points
 from ukoreshot_plugin.interface.player_widget import PlayerWidget, paint_frame_number
@@ -903,7 +903,23 @@ class UkoreShotPage(QWidget):
         # pointer becomes resolvable, or a fresh pull would land with no
         # share info at all despite the frames having arrived fine.
         existing_code = entry.share_state.get("code")
-        code = existing_code or comment_store.generate_share_code(entry.parsed["shot_code"], entry.parsed["version"])
+        if existing_code:
+            code = existing_code
+        else:
+            self._set_status_message("Generating share code...")
+            try:
+                # Checked directly against the cloud (not just trusted to
+                # be unique from the random suffix alone) so a generated
+                # code can never collide with one already pushed there —
+                # see generate_unique_share_code's own docstring.
+                code = generate_unique_share_code(
+                    self._api.cloud_sync, entry.parsed["shot_code"], entry.parsed["version"]
+                )
+            except RuntimeError as exc:
+                _logger.warning("Mark as Share: could not generate a unique share code: %s", exc)
+                self._hide_status()
+                QMessageBox.warning(self, "Mark as Share", str(exc))
+                return
         frame_files = sorted(
             p for p in sequence_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}
         )
@@ -937,14 +953,23 @@ class UkoreShotPage(QWidget):
             self._api.cloud_sync, project_id=self._project_id, repo_id=self._repo_id, sequence_dir=sequence_dir, parent=self
         )
         worker.succeeded.connect(
-            lambda: self._on_share_upload_succeeded(code, sequence_dir, len(frame_files), image_format, fps, audio_format)
+            lambda: self._on_share_upload_succeeded(
+                code, entry.key, sequence_dir, len(frame_files), image_format, fps, audio_format
+            )
         )
-        worker.failed.connect(lambda message: self._on_share_upload_failed(message, sequence_dir, was_already_shared=bool(existing_code)))
+        worker.failed.connect(
+            lambda message: self._on_share_upload_failed(
+                message, entry.key, sequence_dir, was_already_shared=bool(existing_code)
+            )
+        )
         worker.finished.connect(worker.deleteLater)
         self._share_worker = worker
         worker.start()
 
-    def _on_share_upload_succeeded(self, code: str, sequence_dir: Path, frame_count: int, image_format: str, fps: float, audio_format: str | None) -> None:
+    def _on_share_upload_succeeded(
+        self, code: str, entry_key: str, sequence_dir: Path, frame_count: int, image_format: str, fps: float,
+        audio_format: str | None,
+    ) -> None:
         self._share_worker = None
         self.mark_as_share_button.setEnabled(True)
         self._hide_status()
@@ -965,6 +990,15 @@ class UkoreShotPage(QWidget):
             audio_format=audio_format,
         )
         self._reload_videos()
+        # _reload_videos() always resets selection to its own "most
+        # recently modified" default (see its own docstring) — usually the
+        # entry just shared, but not guaranteed to be if some other entry
+        # happens to have an even more recent mtime. Explicitly re-select
+        # the exact entry this share was for (fixed 2026-08-21, a real bug
+        # report: without this, a later click on pushButton_copy_clipboard
+        # could copy a *different* entry's code than the one this dialog
+        # just showed, if selection had drifted to some other row).
+        self._select_row_by_key(entry_key)
         # Single-button "Copy Code and Close" instead of a plain OK dialog
         # (2026-08-21, per the user's own request) — the whole point of
         # this dialog is handing the just-generated code to the artist, so
@@ -981,7 +1015,7 @@ class UkoreShotPage(QWidget):
         if dialog.clickedButton() is copy_close_button:
             QApplication.clipboard().setText(code)
 
-    def _on_share_upload_failed(self, message: str, sequence_dir: Path, *, was_already_shared: bool) -> None:
+    def _on_share_upload_failed(self, message: str, entry_key: str, sequence_dir: Path, *, was_already_shared: bool) -> None:
         self._share_worker = None
         self.mark_as_share_button.setEnabled(True)
         self._hide_status()
@@ -994,6 +1028,7 @@ class UkoreShotPage(QWidget):
             # nothing.
             comment_store.set_share_state(sequence_dir, is_shared=False)
             self._reload_videos()
+            self._select_row_by_key(entry_key)
         QMessageBox.warning(self, "Share Failed", message)
 
     def _on_copy_clipboard_clicked(self) -> None:

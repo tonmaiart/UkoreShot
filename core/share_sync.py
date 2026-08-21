@@ -90,6 +90,37 @@ def pull_pointer(cloud_sync, code: str) -> dict | None:
         temp_path.unlink(missing_ok=True)
 
 
+_MAX_CODE_GENERATION_ATTEMPTS = 10
+
+
+def generate_unique_share_code(cloud_sync, shot_code: str, version: int) -> str:
+    """comment_store.generate_share_code's own 4-hex-char random suffix
+    makes an accidental collision with a code already pushed to the cloud
+    astronomically unlikely (1 in 65536 for the same shot_code+version
+    alone) but not impossible, and R2JsonSync has no way to *enumerate*
+    what's already in the bucket to rule collisions out up front (see this
+    module's own docstring) — so this checks each freshly-generated
+    candidate directly against the cloud (pull_pointer, which returns None
+    for a code nobody's pushed a pointer for yet) before accepting it,
+    retrying with a fresh random suffix on an actual collision. Called
+    synchronously on the UI thread from video_library_page.py's
+    _on_mark_as_share_clicked, same as every other blocking cloud_sync
+    call already made there before the async ShareUploadWorker starts.
+    Raises RuntimeError if _MAX_CODE_GENERATION_ATTEMPTS genuinely unlucky
+    retries in a row all collided — practically unreachable, but better
+    than looping forever if it somehow ever did."""
+    for _ in range(_MAX_CODE_GENERATION_ATTEMPTS):
+        code = comment_store.generate_share_code(shot_code, version)
+        if pull_pointer(cloud_sync, code) is None:
+            return code
+        _logger.warning("generate_unique_share_code: collision on %s, retrying", code)
+    raise RuntimeError(
+        "Could not generate a unique share code after {} attempts — this should never happen.".format(
+            _MAX_CODE_GENERATION_ATTEMPTS
+        )
+    )
+
+
 class ShareUploadWorker(QThread):
     """One-shot upload of an already-extracted sequence + its comments.json
     to R2, then the pointer blob that makes the resulting code resolvable.

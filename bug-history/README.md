@@ -69,3 +69,42 @@ nothing visible — the exact "silent failure" class of bug this file's own
 crash (the `WindowMaximized`/`resizeEvent` one). Fixed by dropping the
 cursor-to-end positioning entirely (cosmetic only, not worth the enum
 risk) rather than chasing the "correct" scoped-vs-flat spelling.
+
+## 2026-08-21 — Maya playblast aborted with "file exists and overwrite flag not set"
+
+`maya-scripts/UkorePlayblast/function.py`'s `_resolve_filename_stem`
+picked the "next" version/index purely from `_matching_versions`, a regex
+scan of `video_root`'s existing filenames — if a previous playblast's
+actual on-disk output didn't cleanly match the expected
+`SEQ_ShotCode_Variation_index_version.ext` shape (e.g. a Maya output
+format/compression combo that appends more than one clean extension), the
+scan silently missed it and treated its version as still free.
+`cmds.playblast()` then hit that already-occupied filename itself and
+aborted outright (`forceOverwrite` defaults to `False` and this tool never
+sets it — overwriting an existing playblast is never correct) with "The
+file ... exists and overwrite flag not set. Playblast aborted." instead of
+ever writing a file. Fixed by adding `_stem_is_free` — a second,
+independent check straight against the filesystem (no regex, just "does
+any file start with this stem+.") — and a loop in `_resolve_filename_stem`
+that keeps bumping the candidate version/index past an exact collision
+until the stem is genuinely free, regardless of why the scan-based pick
+missed it.
+
+## 2026-08-21 — Copy Share Code could copy a different entry's code than the dialog just showed
+
+`interface/video_library_page.py`'s `_on_share_upload_succeeded` called
+`self._reload_videos()` after a successful Mark as Share, then showed the
+"Copy Code and Close" dialog. `_reload_videos()` always resets selection
+to `_restore_or_default_selection`'s own "most recently modified" default
+(it clears `self._selected_key` at the very start of every reload) — this
+is usually the entry that was just shared, but isn't guaranteed to be if
+some other entry happens to have an even more recent `mtime`. If
+selection drifted to a different row during that reload, a later click on
+`pushButton_copy_clipboard` would copy *that* row's code instead of the
+one the dialog had just shown — a real user report ("dialog shows a new
+`UKSHOT_`-prefixed code, but Copy Share Code afterward gets an old
+non-prefixed one"). Fixed by threading the shared entry's own `entry.key`
+through to `_on_share_upload_succeeded`/`_on_share_upload_failed` and
+explicitly calling `_select_row_by_key(entry_key)` right after each of
+their own `_reload_videos()` calls — the same fix already applied to
+`_on_pull_by_code_succeeded` for the same class of bug.

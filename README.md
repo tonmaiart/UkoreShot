@@ -128,6 +128,15 @@ further detail):
   before; `_disable_gate_and_resolution_display`/
   `_restore_gate_and_resolution_display` record each attribute's prior
   value first and restore it afterward either way, success or failure).
+  `_resolve_filename_stem`'s version/index pick is a scan-based guess
+  (`_matching_versions`, regex against existing filenames) that can miss
+  an existing file whose actual on-disk name doesn't cleanly match the
+  expected shape — `_stem_is_free` is a second, independent filesystem
+  check that keeps bumping the candidate stem until it's genuinely free,
+  so `cmds.playblast()` (whose `forceOverwrite` is deliberately never set
+  — overwriting an existing playblast is never correct, only picking a
+  new name is) never aborts with a real "file exists" error (fixed
+  2026-08-21, a real user report).
 - `manifest.json` / `plugin.py` / `__init__.py` — plugin entry point, stay
   at this top level: the host app's plugin loader looks for both directly
   inside a plugin's own top-level directory.
@@ -193,6 +202,22 @@ no prefix and was never migrated to add one, it just keeps working as-is
 — `video_library_page.py`'s `_SHARE_CODE_PATTERN` matches both shapes)
 and pushes a small pointer blob (`share_sync.push_pointer`) that makes the
 code resolvable. "Copy Share Code" copies that code as plain text.
+`share_sync.generate_unique_share_code` (2026-08-21, per the user's own
+request that a generated code must never collide with one already in the
+cloud) is what `_on_mark_as_share_clicked` actually calls instead of
+`comment_store.generate_share_code` directly — R2JsonSync has no way to
+*enumerate* the bucket to rule collisions out up front, so it checks each
+freshly-generated candidate against the cloud (`pull_pointer`, non-`None`
+means taken) and retries with a fresh random suffix on an actual
+collision, up to `_MAX_CODE_GENERATION_ATTEMPTS` (10, practically never
+exhausted). `_on_share_upload_succeeded`/`_on_share_upload_failed` also
+now take the shared entry's own `entry.key` and explicitly re-select that
+exact row (`_select_row_by_key`) after their own `_reload_videos()` call —
+`_reload_videos()` always resets selection to its "most recently
+modified" default, which usually *is* the entry just shared but isn't
+guaranteed to be, so without this a later `pushButton_copy_clipboard`
+click could copy a *different* entry's code than the "Copy Code and
+Close" dialog just showed (fixed 2026-08-21, a real user report).
 
 `ShareUploadWorker`/`PullByCodeWorker` push/pull up to
 `_MAX_CONCURRENT_TRANSFERS` (6) frame files at once via a

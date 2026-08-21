@@ -121,6 +121,21 @@ def _next_index(video_root, sequence: str, shot_code: str, variation: str, versi
     return (max(indices) + 1) if indices else 1
 
 
+def _stem_is_free(video_root, stem: str) -> bool:
+    """True if no file in video_root already starts with this exact stem
+    followed by "." — the defensive check _resolve_filename_stem's own
+    loop uses below. cmds.playblast's own forceOverwrite defaults to False
+    and this tool deliberately never sets it (overwriting an existing
+    playblast is never correct — only ever picking a new name is, per the
+    user's own request), so publish_playblast must never hand it a stem
+    some existing file already occupies, or Maya aborts outright with
+    "The file ... exists and overwrite flag not set.\""""
+    if not video_root.is_dir():
+        return True
+    prefix = stem + "."
+    return not any(p.name.startswith(prefix) for p in video_root.iterdir() if p.is_file())
+
+
 def _resolve_filename_stem(video_root, sequence: str, shot_code: str, variation: str, *, is_image: bool) -> str:
     """SEQ_ShotCode_Variation_index_version, no extension. A video
     playblast always starts a brand-new version (index always "001" — one
@@ -131,7 +146,19 @@ def _resolve_filename_stem(video_root, sequence: str, shot_code: str, variation:
     with the user 2026-07-20: an image playblast "adds an index into the
     same version" rather than starting a new one, so a set of stills for
     one take ends up as v001 index 001, 002, 003... instead of each being
-    its own version."""
+    its own version.
+
+    The initial version/index picked above only trusts _matching_versions'
+    regex scan of existing files, which can miss one whose actual on-disk
+    name doesn't cleanly match SEQ_ShotCode_Variation_index_version.ext
+    (e.g. a Maya output format/compression combo that appends more than a
+    single clean extension) — that made the "next" version look free when
+    it wasn't, so cmds.playblast aborted with a real "file exists" error
+    instead of ever writing (fixed 2026-08-21, a real user report). The
+    while loop below is a second, independent check straight against the
+    filesystem (_stem_is_free, no regex) — it keeps bumping past an exact
+    collision until the candidate stem is genuinely free, regardless of
+    why the scan-based pick above missed it."""
     if is_image:
         version = _latest_version(video_root, sequence, shot_code, variation)
         if version is None:
@@ -140,7 +167,14 @@ def _resolve_filename_stem(video_root, sequence: str, shot_code: str, variation:
     else:
         version = _next_version(video_root, sequence, shot_code, variation)
         index = 1
-    return "{}_{}_{}_{:03d}_v{:03d}".format(sequence, shot_code, variation, index, version)
+    stem = "{}_{}_{}_{:03d}_v{:03d}".format(sequence, shot_code, variation, index, version)
+    while not _stem_is_free(video_root, stem):
+        if is_image:
+            index += 1
+        else:
+            version += 1
+        stem = "{}_{}_{}_{:03d}_v{:03d}".format(sequence, shot_code, variation, index, version)
+    return stem
 
 
 def _finalize_single_frame_image(export_file_path: str, image_format: str) -> str:
@@ -264,6 +298,11 @@ def publish_playblast() -> None:
         sequence, shot_code = _resolve_seq_shot(_current_scene_basename())
         variation = _sanitize_token(options.get("variation") or "layout")
         is_image = options.get("output_mode") == "current_frame_image"
+        # forceOverwrite is deliberately never passed to cmds.playblast()
+        # below (defaults to False) — an existing playblast should never
+        # get silently overwritten, only ever get a fresh name instead;
+        # _resolve_filename_stem's own collision-avoidance loop
+        # (_stem_is_free) is what guarantees this stem is actually free.
         stem = _resolve_filename_stem(video_root, sequence, shot_code, variation, is_image=is_image)
         export_file_path = os.path.join(str(video_root), stem)
         print("[UkorePlayblast] Destination folder: {}".format(video_root))
