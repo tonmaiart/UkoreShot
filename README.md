@@ -85,8 +85,12 @@ further detail):
   shared. Registers "Ukore Shot Playblast" (General category) and
   "Playblast Options..." (Anim category) into `ukore_menu`'s central
   "Ukore Tools" registry. `function.py`'s `publish_playblast()` also
-  auto-disables Film Gate on the capturing camera for the duration of the
-  capture (restored afterward either way).
+  auto-disables Film Gate + Resolution Gate display (`displayFilmGate`/
+  `displayResolution`) on every camera in the scene for the duration of
+  the capture (2026-08-21 — was just the capturing camera's Film Gate
+  before; `_disable_gate_and_resolution_display`/
+  `_restore_gate_and_resolution_display` record each attribute's prior
+  value first and restore it afterward either way, success or failure).
 - `manifest.json` / `plugin.py` / `__init__.py` — plugin entry point, stay
   at this top level: the host app's plugin loader looks for both directly
   inside a plugin's own top-level directory.

@@ -167,47 +167,40 @@ def _finalize_single_frame_image(export_file_path: str, image_format: str) -> st
     return target_path
 
 
-def _resolve_camera_shape(panel):
-    """Camera shape node currently assigned to `panel`, or None — used to
-    toggle displayFilmGate off for the exact camera a playblast will
-    actually capture through. Best-effort: any failure here just means the
-    Film Gate auto-disable below no-ops, never blocks the playblast
-    itself."""
-    if not panel or cmds.getPanel(typeOf=panel) != "modelPanel":
-        return None
-    cam = cmds.modelPanel(panel, query=True, camera=True)
-    if not cam or not cmds.objExists(cam):
-        return None
-    shapes = cmds.listRelatives(cam, shapes=True, fullPath=True) or []
-    return shapes[0] if shapes else cam
+def _disable_gate_and_resolution_display():
+    """Turns displayFilmGate and displayResolution off for every camera in
+    the scene for the duration of a playblast — not just whichever camera
+    is actually being captured through (the user's own request, replacing
+    the old single-capturing-camera Film Gate toggle). Records each
+    attribute's prior value first so
+    _restore_gate_and_resolution_display can put back exactly what was
+    there before, only for the attributes actually flipped off here (an
+    attribute already off is left alone and never added to the returned
+    list, so restoring can't accidentally turn one back on that wasn't on
+    to begin with). Swallows any per-camera/per-attribute Maya API error —
+    a camera missing one of these attributes, or any other resolution
+    hiccup, just leaves that one attribute untouched rather than failing
+    the whole playblast."""
+    saved_state = []
+    for camera_shape in cmds.ls(type="camera") or []:
+        for attr in ("displayFilmGate", "displayResolution"):
+            try:
+                plug = "{}.{}".format(camera_shape, attr)
+                if not cmds.getAttr(plug):
+                    continue
+                cmds.setAttr(plug, False)
+                saved_state.append((camera_shape, attr))
+            except Exception:
+                continue
+    return saved_state
 
 
-def _disable_film_gate(camera_shape):
-    """Turns displayFilmGate off for camera_shape if it's currently on,
-    returning camera_shape (so the caller knows to restore it afterward)
-    or None if there was nothing to restore. Swallows any Maya API error —
-    a camera without the attribute, or any other resolution hiccup, just
-    means Film Gate is left exactly as it was."""
-    if not camera_shape:
-        return None
-    try:
-        if not cmds.attributeQuery("displayFilmGate", node=camera_shape, exists=True):
-            return None
-        if not cmds.getAttr("{}.displayFilmGate".format(camera_shape)):
-            return None
-        cmds.setAttr("{}.displayFilmGate".format(camera_shape), False)
-        return camera_shape
-    except Exception:
-        return None
-
-
-def _restore_film_gate(camera_shape):
-    if not camera_shape:
-        return
-    try:
-        cmds.setAttr("{}.displayFilmGate".format(camera_shape), True)
-    except Exception:
-        pass
+def _restore_gate_and_resolution_display(saved_state):
+    for camera_shape, attr in saved_state:
+        try:
+            cmds.setAttr("{}.{}".format(camera_shape, attr), True)
+        except Exception:
+            pass
 
 
 def _locate_video_output(export_file_path: str) -> str:
@@ -287,10 +280,10 @@ def publish_playblast() -> None:
         if options["camera"] and panel and cmds.getPanel(typeOf=panel) == "modelPanel":
             cmds.modelPanel(panel, edit=True, camera=options["camera"])
 
-        # Auto-disable Film Gate for whichever camera is actually being
-        # captured, restored afterward regardless of success/failure — a
-        # playblast shouldn't leave the viewport's display state changed.
-        film_gate_camera = _disable_film_gate(_resolve_camera_shape(panel))
+        # Auto-disable Film Gate + Resolution Gate display for every camera
+        # in the scene, restored afterward regardless of success/failure —
+        # a playblast shouldn't leave the viewport's display state changed.
+        gate_display_state = _disable_gate_and_resolution_display()
         try:
             if is_image:
                 # Current-frame-only capture — deliberately not the whole
@@ -349,7 +342,7 @@ def publish_playblast() -> None:
                 cmds.playblast(**playblast_kwargs)
                 saved_path = _locate_video_output(export_file_path)
         finally:
-            _restore_film_gate(film_gate_camera)
+            _restore_gate_and_resolution_display(gate_display_state)
 
         print("[UkorePlayblast] Playblast saved: {}".format(saved_path))
         message = "<hl>Playblast saved:</hl> {}".format(saved_path)
