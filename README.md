@@ -64,10 +64,16 @@ further detail):
   frame tick during playback. The button's own icon swaps with its state
   (`_update_show_comment_icon`) — `comment_mode.png` while showing
   comments, `icons8-video-50.png` while off. `pushButton_edit_message` in
-  `CommentEditor` shows its "Edit" label alongside its icon (every other
-  icon button here is icon-only) and now also works with no table row
-  selected — it falls back to adding a comment on whichever frame the
-  player is currently on.
+  `CommentEditor` now also works with no table row selected — it falls
+  back to adding a comment on whichever frame the player is currently on.
+  `CommentEditor`'s Keyframe Comment table no longer auto-adds a row for
+  whichever frame the player happens to be on (removed 2026-08-21, per the
+  user's own request) — a frame only ever gets a row once it actually has
+  a saved comment or drawing (`_keyframe_indices`), not just for being on
+  screen. `pushButton_clear_frame`/`pushButton_edit_message` also went
+  back to plain, icon-less buttons the same day, using
+  `CommentEditor.ui`'s own original labels ("Clean Draw"/"Edit Message")
+  instead of `_set_button_icon`'s usual icon-only look.
   `player_widget.py`'s `PlayerWidget` plays either a real video file
   (`QMediaPlayer`) or an already-extracted image sequence
   (`sequence_player.py`'s `SequencePlayer`, frame-accurate, used by

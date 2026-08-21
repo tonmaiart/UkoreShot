@@ -78,7 +78,6 @@ both that and the old inline-editing code path used."""
 
 from __future__ import annotations
 
-import bisect
 import copy
 import datetime
 import logging
@@ -132,8 +131,6 @@ _PREV_COMMENT_ICON_PATH = _ICONS_DIR / "prev_comment.png"
 _NEXT_COMMENT_ICON_PATH = _ICONS_DIR / "next_comment.png"
 _UNDO_ICON_PATH = _ICONS_DIR / "undo.png"
 _REDO_ICON_PATH = _ICONS_DIR / "redo.png"
-_CLEAR_FRAME_ICON_PATH = _ICONS_DIR / "clear_frame.png"
-_EDIT_MESSAGE_ICON_PATH = _ICONS_DIR / "icons8-edit-50.png"
 
 _active_frame_icon: QIcon | None = None
 
@@ -295,14 +292,10 @@ class CommentEditor(QDialog):
         PlayerWidget._set_button_icon(self.next_comment_button, _NEXT_COMMENT_ICON_PATH, "Comment >")
         PlayerWidget._set_button_icon(self.undo_button, _UNDO_ICON_PATH, "Undo")
         PlayerWidget._set_button_icon(self.redo_button, _REDO_ICON_PATH, "Redo")
-        PlayerWidget._set_button_icon(self.clear_button, _CLEAR_FRAME_ICON_PATH, "Clear")
-        PlayerWidget._set_button_icon(self.edit_message_button, _EDIT_MESSAGE_ICON_PATH, "Edit")
-        # Icon + label together (2026-08-21, per the user's own request) —
-        # unlike every other icon button here, _set_button_icon's usual
-        # icon-only look (it blanks the text once an icon file exists)
-        # would leave this one reading as a bare icon; re-set the text back
-        # on afterward so "Edit" always shows alongside the icon.
-        self.edit_message_button.setText("Edit")
+        # pushButton_clear_frame/pushButton_edit_message deliberately don't
+        # go through _set_button_icon (2026-08-21, per the user's own
+        # request) — no icon at all for these two, just CommentEditor.ui's
+        # own original label ("Clean Draw"/"Edit Message"), left untouched.
         self.prev_frame_button.clicked.connect(lambda: self.player_widget.step_frame(-1))
         self.play_button.clicked.connect(self.player_widget.toggle_play)
         self.next_frame_button.clicked.connect(lambda: self.player_widget.step_frame(1))
