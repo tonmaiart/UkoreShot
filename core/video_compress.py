@@ -167,6 +167,14 @@ def compress_to_fit(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Path:
             ffmpeg_path,
             "-y",
             "-i", str(video_path),
+            # Explicit stream mapping — without it, ffmpeg's default
+            # "best stream per type" selection dropped the audio track on
+            # some Maya-playblasted .mov sources (Get Video came out
+            # silent even though the source had sound). "0:a:0?" the "?"
+            # makes an audio stream optional, so a genuinely silent source
+            # still encodes fine with video only.
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
             "-b:v", str(video_bitrate),
             "-b:a", str(_AUDIO_BITRATE_BPS),
             "-movflags", "+faststart",

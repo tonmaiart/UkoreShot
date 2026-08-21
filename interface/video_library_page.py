@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -57,7 +57,6 @@ _SHARE_ICON_SIZE = QSize(20, 20)
 _COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_DATE, _COL_TIME_AGO = range(5)
 
 _SORT_NAME_ASC = "name_asc"
-_SORT_OLDEST = "oldest"
 _SORT_NEWEST = "newest"
 _DEFAULT_SORT = _SORT_NEWEST
 
@@ -206,10 +205,10 @@ class UkoreShotPage(QWidget):
         self.search_edit: QLineEdit = find(QLineEdit, "lineEdit_search_bar")
         self.reload_button: QPushButton = find(QPushButton, "pushButton_reload")
         self.sort_ascending_button: QPushButton = find(QPushButton, "pushButton_sort_ascending")
-        self.sort_oldest_button: QPushButton = find(QPushButton, "pushButton_sort_oldest")
         self.sort_newest_button: QPushButton = find(QPushButton, "pushButton_sort_newest")
         self.comment_button: QPushButton = find(QPushButton, "pushButton_comment")
         self.mark_as_share_button: QPushButton = find(QPushButton, "pushButton_mark_as_share")
+        self.delete_button: QPushButton = find(QPushButton, "pushButton_delete_playblast")
         self.copy_clipboard_button: QPushButton = find(QPushButton, "pushButton_copy_clipboard")
         self.get_video_button: QPushButton = find(QPushButton, "pushButton_get_video")
         self.get_video_commented_button: QPushButton = find(QPushButton, "pushButton_get_video_commented")
@@ -239,10 +238,10 @@ class UkoreShotPage(QWidget):
             ("lineEdit_search_bar", self.search_edit),
             ("pushButton_reload", self.reload_button),
             ("pushButton_sort_ascending", self.sort_ascending_button),
-            ("pushButton_sort_oldest", self.sort_oldest_button),
             ("pushButton_sort_newest", self.sort_newest_button),
             ("pushButton_comment", self.comment_button),
             ("pushButton_mark_as_share", self.mark_as_share_button),
+            ("pushButton_delete_playblast", self.delete_button),
             ("pushButton_copy_clipboard", self.copy_clipboard_button),
             ("pushButton_get_video", self.get_video_button),
             ("pushButton_get_video_commented", self.get_video_commented_button),
@@ -302,7 +301,7 @@ class UkoreShotPage(QWidget):
         self.table.setHorizontalHeaderLabels(["", "Name", "Shared", "Date", "Time Ago"])
         self.table.setIconSize(_ICON_SIZE)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
         self.table.verticalHeader().setDefaultSectionSize(_ICON_SIZE.height() + 12)
@@ -318,14 +317,24 @@ class UkoreShotPage(QWidget):
         self.search_edit.returnPressed.connect(self._on_search_enter)
         self.reload_button.clicked.connect(self._reload_videos)
         self.sort_ascending_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NAME_ASC))
-        self.sort_oldest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_OLDEST))
         self.sort_newest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NEWEST))
         self.comment_button.clicked.connect(self._on_edit_comment_clicked)
         self.mark_as_share_button.clicked.connect(self._on_mark_as_share_clicked)
         self.copy_clipboard_button.clicked.connect(self._on_copy_clipboard_clicked)
         self.get_video_button.clicked.connect(self._on_get_video_clicked)
         self.get_video_commented_button.clicked.connect(self._on_get_video_commented_clicked)
+        self.delete_button.clicked.connect(self._on_delete_playblast_clicked)
         self.copy_clipboard_button.setEnabled(False)
+
+        # Shift+A/Shift+D — jump to the previous/next commented keyframe of
+        # the selected entry, same shortcut comment_editor.py's own
+        # CommentEditor already wires to its own Previous/Next Comment
+        # buttons (see that file's __init__) — this page had the buttons but
+        # no keyboard shortcut for them until now.
+        self._prev_comment_shortcut = QShortcut(QKeySequence("Shift+A"), self)
+        self._prev_comment_shortcut.activated.connect(self._on_prev_comment_clicked)
+        self._next_comment_shortcut = QShortcut(QKeySequence("Shift+D"), self)
+        self._next_comment_shortcut.activated.connect(self._on_next_comment_clicked)
 
         self._update_button_states()
         _logger.info("UkoreShotPage.__init__ finished")
@@ -391,6 +400,9 @@ class UkoreShotPage(QWidget):
 
     def _on_frame_index_changed(self, frame_index: int) -> None:
         self._current_frame_index = frame_index
+        # Kept in sync with the player, not just a write-only entry field —
+        # same as comment_editor.py's own lineEdit_keyframe.
+        self.keyframe_edit.setText(str(frame_index))
 
     # -- busy status (widget_status_loading) ---------------------------------
 
@@ -503,8 +515,6 @@ class UkoreShotPage(QWidget):
     def _sort_entries(self, entries: list[_LibraryEntry]) -> list[_LibraryEntry]:
         if self._sort_mode == _SORT_NAME_ASC:
             return sorted(entries, key=lambda e: e.stem.lower())
-        if self._sort_mode == _SORT_OLDEST:
-            return sorted(entries, key=lambda e: e.mtime)
         return sorted(entries, key=lambda e: e.mtime, reverse=True)  # _SORT_NEWEST, the default
 
     def _make_shared_cell_widget(self, is_shared: bool) -> QLabel:
@@ -632,18 +642,38 @@ class UkoreShotPage(QWidget):
         # player already communicate "nothing here yet" on its own.
         pass
 
+    def _selected_entries(self) -> list[_LibraryEntry]:
+        """Every row in the current (possibly multi-row) table selection —
+        used by the Delete button, unlike self._selected_key/_selected_entry
+        which only ever track the single "current" row the player previews
+        (table.currentRow() stays well-defined under ExtendedSelection too,
+        so that preview logic doesn't need to change for multi-select)."""
+        entries = []
+        for index in self.table.selectionModel().selectedRows():
+            item = self.table.item(index.row(), _COL_NAME)
+            key = item.data(Qt.UserRole) if item is not None else None
+            entry = self._entries_by_key.get(key) if key else None
+            if entry is not None:
+                entries.append(entry)
+        return entries
+
     def _update_button_states(self) -> None:
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         has_selection = entry is not None
+        is_shared = has_selection and entry.share_state["is_shared"]
         self.comment_button.setEnabled(has_selection)
-        self.mark_as_share_button.setEnabled(has_selection)
+        # Already shared — Mark as Share has nothing left to do for this
+        # entry (re-sharing isn't a thing; Comment's own incremental
+        # CommentSyncWorker already keeps a shared video's comments.json up
+        # to date on Save).
+        self.mark_as_share_button.setEnabled(has_selection and not is_shared)
         # Get Video needs a real source file to compress from; Get Video -
         # Commented works off the sequence instead, which every selectable
         # entry has (or can lazily extract) regardless of a local video file.
         self.get_video_button.setEnabled(has_selection and entry.video_path is not None)
         self.get_video_commented_button.setEnabled(has_selection)
-        is_shared = has_selection and entry.share_state["is_shared"]
         self.copy_clipboard_button.setEnabled(bool(is_shared and entry.share_state.get("code")))
+        self.delete_button.setEnabled(bool(self._selected_entries()))
 
     # -- share-code search-bar round-trip -----------------------------------
 
@@ -889,6 +919,56 @@ class UkoreShotPage(QWidget):
         code = entry.share_state.get("code")
         if code:
             QApplication.clipboard().setText(code)
+
+    # -- delete ---------------------------------------------------------------
+
+    def _on_delete_playblast_clicked(self) -> None:
+        """pushButton_delete_playblast — deletes every selected row's local
+        video file + sequence_dir (comments.json included) from this
+        machine only. Never calls into share_sync/cloud_sync: R2JsonSync
+        only has pull/push today, no delete-blob operation, so a shared
+        entry's uploaded frames/comments.json stay in the cloud (and any
+        other machine that still has its share code can keep pulling it)
+        regardless of what's clicked here — confirmed with the user, not a
+        bug to fix later."""
+        entries = self._selected_entries()
+        if not entries:
+            return
+        shared_entries = [e for e in entries if e.share_state.get("is_shared")]
+        if shared_entries:
+            message = (
+                "{} of {} selected playblast(s) are marked as shared.\n\n"
+                "Deleting removes only your LOCAL copy — the shared copy stays available in the cloud "
+                "(and to anyone who still has its share code). Removing a shared playblast from the "
+                "server isn't supported yet.\n\nDelete the local copy anyway?"
+            ).format(len(shared_entries), len(entries))
+        else:
+            message = "Delete {} selected playblast(s) from this machine? This cannot be undone.".format(len(entries))
+        if QMessageBox.question(
+            self, "Delete Playblast", message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        ) != QMessageBox.Yes:
+            return
+
+        deleted_keys = set()
+        failed_names = []
+        for entry in entries:
+            try:
+                if entry.video_path is not None and entry.video_path.is_file():
+                    entry.video_path.unlink()
+                if entry.sequence_dir.is_dir():
+                    shutil.rmtree(entry.sequence_dir)
+                deleted_keys.add(entry.key)
+            except OSError:
+                _logger.exception("failed to delete playblast %s", entry.key)
+                failed_names.append(entry.stem)
+        _logger.info("Delete Playblast: removed %d of %d selected entr(y/ies)", len(deleted_keys), len(entries))
+        if self._selected_key in deleted_keys:
+            self._selected_key = None
+        self._reload_videos()
+        if failed_names:
+            QMessageBox.warning(
+                self, "Delete Failed", "Could not delete: {}".format(", ".join(failed_names))
+            )
 
     # -- get video / get video - commented -----------------------------------
 

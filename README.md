@@ -42,7 +42,18 @@ further detail):
   `QUiLoader` — the `.ui` supplies layout/widget identity, the Python
   wires behavior. `video_library_page.py`'s `UkoreShotPage` is the
   section's top-level widget (search/sort/table + an inline `PlayerWidget`
-  viewer + Comment/Mark as Share/Get Video/Get Video - Commented).
+  viewer + Comment/Mark as Share/Get Video/Get Video - Commented/Delete).
+  `tableWidget_playblast_library` is multi-selectable (`ExtendedSelection`,
+  2026-08-21) — `pushButton_delete_playblast` deletes every selected row's
+  local video file + `sequence_dir` (comments.json included), confirmed
+  with a dialog first; deleting a shared entry only ever removes the local
+  copy (R2JsonSync has no delete-blob operation, so the cloud copy and its
+  share code both keep working from any other machine — this is
+  deliberate, not a TODO). Mark as Share is disabled once an entry is
+  already shared. Shift+A/Shift+D jump to the previous/next commented
+  keyframe here too, same as `CommentEditor`'s own shortcut.
+  `pushButton_sort_oldest` was removed from `UkoreShotPage.ui` 2026-08-21
+  (name-ascending/newest-first are the only sort modes left).
   `player_widget.py`'s `PlayerWidget` plays either a real video file
   (`QMediaPlayer`) or an already-extracted image sequence
   (`sequence_player.py`'s `SequencePlayer`, frame-accurate, used by
