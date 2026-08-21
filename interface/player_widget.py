@@ -4,11 +4,10 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QShortcut
+from PySide6.QtGui import QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication,
-    QColorDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,10 +25,6 @@ from ukoreshot_plugin.interface.draw_overlay import DrawOverlay
 from ukoreshot_plugin.interface.sequence_player import SequencePlayer
 
 _logger = logging.getLogger("UkoreShot.Player")
-
-_MIN_TOOL_SIZE = 1
-_MAX_TOOL_SIZE = 60
-_DEFAULT_TOOL_SIZE = 6
 
 _DEFAULT_FPS = 24
 # cache/plugins/UkoreShot/interface/player_widget.py, one parent up is
@@ -214,22 +209,30 @@ class PlayerWidget(QWidget):
     **`show_edit_tools=True` also means "use `CommentEditor.ui`'s own
     transport row"**: `CommentEditor.ui` already lays out its
     own `pushButton_previous_frame`/`play`/`next_frame` (right beside its
-    own Previous/Next Comment buttons) and its own `pushButton_undo`/
-    `redo`/`clear_frame` — so this widget skips building/showing its own
-    competing copies of those six buttons in that mode. The underlying
-    handlers stay here (`step_frame`/`toggle_play` are public wrappers
-    `CommentEditor` connects its own buttons to; `draw_overlay.undo`/
-    `redo`/`clear_frame` are already public) and `playingChanged` lets the
-    host keep its own play button's icon in sync. `select_button`/
-    `color_button`/`size_slider` have no `.ui` equivalent and stay
-    code-built either way.
+    own Previous/Next Comment buttons), its own `pushButton_undo`/`redo`/
+    `clear_frame`, and (2026-08-21) `pushButton_brush_color`/
+    `comboBox_speed`/`lineEdit_keyframe` too — so this widget skips
+    building/showing its own competing copies of any of those in that
+    mode (own_transport_controls is also always False for CommentEditor —
+    see below). The underlying handlers stay here (`step_frame`/
+    `toggle_play`/`set_speed` are public wrappers `CommentEditor` connects
+    its own buttons to; `draw_overlay.undo`/`redo`/`clear_frame`/
+    `set_color` are already public) and `playingChanged` lets the host
+    keep its own play button's icon in sync. The old code-built Select
+    toggle/color swatch/size slider toolbar is gone entirely (removed
+    2026-08-21 per the user's own request, not replaced by anything in
+    this class — `CommentEditor` now owns color-picking itself via
+    `pushButton_brush_color`; brush size stays adjustable via the mouse
+    wheel or "F"-drag gesture over the canvas regardless, see
+    draw_overlay.py; Select mode has no remaining trigger).
 
     `own_transport_controls=False` is the same idea for `UkoreShotPage.ui`'s
     own transport row (its own `pushButton_previous_frame`/`play`/
     `next_frame`, `lineEdit_keyframe`, `comboBox_speed`) — independent of
-    `show_edit_tools`, since `UkoreShotPage` never sets that. `step_frame`/
-    `toggle_play`/`jump_to_frame`/`set_speed` are the public methods a page
-    in this mode wires its own widgets to."""
+    `show_edit_tools` in principle, though both pages that exist today
+    (`CommentEditor` and `UkoreShotPage`) now pass `own_transport_controls
+    =False`. `step_frame`/`toggle_play`/`jump_to_frame`/`set_speed` are the
+    public methods a page in this mode wires its own widgets to."""
 
     playingChanged = Signal(bool)
     frameIndexChanged = Signal(int)
@@ -353,46 +356,26 @@ class PlayerWidget(QWidget):
             transport_row.addWidget(self.speed_slider)
             transport_row.addWidget(self.speed_label)
 
-        # -- edit toolbar (show_edit_tools only) -----------------------------
+        # -- edit shortcuts (show_edit_tools only) ---------------------------
         # Revived 2026-08-20 from the pre-2026-08-08 show_edit_tools=True
         # branch (see draw_overlay.py's own revival), then simplified
         # 2026-08-21 per the user's own request: brush/eraser are no longer
         # separate toolbar tools — left-click always draws, right-click
         # always erases (see DrawOverlay.mousePressEvent) — and the Text
-        # tool is gone entirely. Only Select remains as an explicit toggle
-        # (a genuinely different interaction, not just a different mouse
-        # button), plus a color swatch and a size slider — undo/redo/Clear
-        # moved to CommentEditor.ui's own pushButton_undo/redo/clear_frame
-        # (see the class docstring), wired straight to draw_overlay there.
-        toolbar_row = None
+        # tool is gone entirely. The Select toggle, color swatch, and size
+        # slider that used to live in a code-built toolbar_row here were
+        # removed entirely 2026-08-21 per the user's own request — color
+        # picking moved to CommentEditor.ui's own pushButton_brush_color
+        # (see comment_editor.py, which now owns _on_pick_color and connects
+        # draw_overlay.colorPickRequested itself); brush size is still
+        # adjustable without any dedicated widget via the mouse wheel or the
+        # "F"-drag gesture (see draw_overlay.py's wheelEvent/_start_resize —
+        # neither ever depended on size_slider existing); Select mode has no
+        # remaining trigger and is effectively unreachable now, same as this
+        # class's own removed toolbar. undo/redo/Clear moved to
+        # CommentEditor.ui's own pushButton_undo/redo/clear_frame earlier the
+        # same day, wired straight to draw_overlay there too.
         if show_edit_tools:
-            self.select_button = QToolButton()
-            self.select_button.setText("Select")
-            self.select_button.setCheckable(True)
-            self.select_button.toggled.connect(self.draw_overlay.set_select_mode)
-
-            self.color_button = QPushButton()
-            self.color_button.setFixedSize(24, 24)
-            self._current_color = QColor("#ff3b30")
-            self._update_color_button()
-            self.color_button.clicked.connect(self._on_pick_color)
-            # Middle mouse click on the canvas itself also opens the color
-            # panel, added 2026-08-21 per the user's own request — an
-            # alternative to reaching for the toolbar swatch without
-            # switching tools first. DrawOverlay only emits the signal
-            # (colorPickRequested); it doesn't import QColorDialog itself,
-            # same split every other toolbar-facing DrawOverlay signal uses.
-            self.draw_overlay.colorPickRequested.connect(self._on_pick_color)
-
-            self.size_slider = QSlider(Qt.Horizontal)
-            self.size_slider.setRange(_MIN_TOOL_SIZE, _MAX_TOOL_SIZE)
-            self.size_slider.setValue(_DEFAULT_TOOL_SIZE)
-            self.size_slider.setMaximumWidth(100)
-            self.size_slider.valueChanged.connect(self.draw_overlay.set_brush_width)
-            self.draw_overlay.toolSizeChanged.connect(self.size_slider.setValue)
-            self.draw_overlay.set_color(self._current_color)
-            self.draw_overlay.set_brush_width(_DEFAULT_TOOL_SIZE)
-
             # Ctrl+Z / Ctrl+Shift+Z, added 2026-08-21 per the user's own
             # request. Ctrl+Shift+Z specifically (not QKeySequence.Redo,
             # which is Ctrl+Y on Windows) since that's the exact binding
@@ -413,13 +396,6 @@ class PlayerWidget(QWidget):
             self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
             self._redo_shortcut.activated.connect(self._redo_if_not_typing)
 
-            toolbar_row = QHBoxLayout()
-            toolbar_row.addWidget(self.select_button)
-            toolbar_row.addWidget(self.color_button)
-            toolbar_row.addWidget(QLabel("Size (scroll to adjust)"))
-            toolbar_row.addWidget(self.size_slider)
-            toolbar_row.addStretch()
-
         # "A"/"D" step one frame back/forward, "Space" toggles play/pause —
         # skipped while a text field has focus (goto_frame_spin's internal
         # line edit) via _is_typing() so typing those letters/space
@@ -439,23 +415,11 @@ class PlayerWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        if toolbar_row is not None:
-            layout.addLayout(toolbar_row)
         layout.addWidget(video_stack_widget, stretch=1)
         layout.addLayout(slider_row)
         layout.addLayout(transport_row)
 
         self._set_paused_state(True)
-
-    def _update_color_button(self) -> None:
-        self.color_button.setStyleSheet("background-color: {}; border: 1px solid #888;".format(self._current_color.name()))
-
-    def _on_pick_color(self) -> None:
-        color = QColorDialog.getColor(self._current_color, self, "Brush Color")
-        if color.isValid():
-            self._current_color = color
-            self._update_color_button()
-            self.draw_overlay.set_color(color)
 
     # -- loading --------------------------------------------------------
 

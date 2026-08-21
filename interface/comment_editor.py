@@ -3,7 +3,7 @@ against the user's own CommentEditor.ui (previously extracted to the
 separate BananaSketch plugin on 2026-08-08; see draw_overlay.py's own
 revival note and git history at commit f9b3505 in UkoreHubDev for the
 original EditVideoDialog this replaces). Wraps an edit-mode PlayerWidget
-(show_edit_tools=True — DrawOverlay + toolbar, see player_widget.py) plus a
+(show_edit_tools=True — DrawOverlay, see player_widget.py) plus a
 keyframe comment table. Everything here operates on sequence_dir (an
 already-extracted image sequence), never a video path directly —
 video_library_page.py's _on_edit_comment_clicked calls ensure_sequence
@@ -40,7 +40,19 @@ verticalLayout_player placeholder instead, and wires the .ui's buttons
 directly to PlayerWidget/DrawOverlay (see player_widget.py's own
 show_edit_tools docstring note). The Author/username column is gone from
 the Keyframe Comment table; a new leading icon column shows a green dot
-on whichever row is the frame currently on screen."""
+on whichever row is the frame currently on screen.
+
+**Brush color/speed/keyframe also moved onto the .ui, same day**:
+player_widget.py's own code-built Select toggle/color swatch/size slider
+toolbar is gone entirely (not replaced — brush size stays adjustable via
+mouse wheel/"F"-drag over the canvas regardless, Select mode has no
+remaining trigger); this dialog now owns brush-color picking itself via
+pushButton_brush_color (_on_pick_brush_color, also wired to
+draw_overlay.colorPickRequested for the existing middle-click-on-canvas
+gesture). comboBox_speed (0.25x-1.00x) and lineEdit_keyframe (kept in
+sync with the player, not just editable) replace player_widget.py's own
+speed_slider/goto_frame_spin here too — PlayerWidget is now constructed
+with own_transport_controls=False for exactly this reason."""
 
 from __future__ import annotations
 
@@ -55,9 +67,12 @@ from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShort
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QColorDialog,
+    QComboBox,
     QDialog,
     QGroupBox,
     QHeaderView,
+    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -181,6 +196,9 @@ class CommentEditor(QDialog):
         self.undo_button: QPushButton = find(QPushButton, "pushButton_undo")
         self.redo_button: QPushButton = find(QPushButton, "pushButton_redo")
         self.clear_button: QPushButton = find(QPushButton, "pushButton_clear_frame")
+        self.brush_color_button: QPushButton = find(QPushButton, "pushButton_brush_color")
+        self.speed_combo: QComboBox = find(QComboBox, "comboBox_speed")
+        self.keyframe_edit: QLineEdit = find(QLineEdit, "lineEdit_keyframe")
         self.viewer_player_layout: QVBoxLayout = find(QVBoxLayout, "verticalLayout_player")
 
         for _name, _widget in [
@@ -197,6 +215,9 @@ class CommentEditor(QDialog):
             ("pushButton_undo", self.undo_button),
             ("pushButton_redo", self.redo_button),
             ("pushButton_clear_frame", self.clear_button),
+            ("pushButton_brush_color", self.brush_color_button),
+            ("comboBox_speed", self.speed_combo),
+            ("lineEdit_keyframe", self.keyframe_edit),
             ("verticalLayout_player", self.viewer_player_layout),
         ]:
             if _widget is None:
@@ -205,17 +226,21 @@ class CommentEditor(QDialog):
         # Embeds into the .ui's own empty verticalLayout_player placeholder
         # inside groupBox_playblast_viewer — not a fresh QVBoxLayout on the
         # groupbox itself, which already has its own gridLayout_4 (the
-        # transport/toolbar rows below) from the .ui.
-        self.player_widget = PlayerWidget(show_edit_tools=True)
+        # transport/toolbar rows below) from the .ui. own_transport_controls
+        # =False: this .ui now supplies its own goto-frame (lineEdit_keyframe)
+        # and speed (comboBox_speed) controls too, so PlayerWidget's own
+        # code-built goto_frame_spin/speed_slider are skipped entirely.
+        self.player_widget = PlayerWidget(show_edit_tools=True, own_transport_controls=False)
         self.player_widget.frameIndexChanged.connect(self._on_frame_index_changed)
         self.player_widget.draw_overlay.strokesChanged.connect(self._on_strokes_changed)
         self.player_widget.playingChanged.connect(self._on_playing_changed)
         if self.viewer_player_layout is not None:
             self.viewer_player_layout.addWidget(self.player_widget)
 
-        # Transport + comment-nav + undo/redo/clear all come from
-        # CommentEditor.ui now (see the module docstring's 2026-08-21 note)
-        # instead of PlayerWidget building duplicate widgets in code.
+        # Transport + comment-nav + undo/redo/clear/brush-color/speed all
+        # come from CommentEditor.ui now (see the module docstring's
+        # 2026-08-21 note) instead of PlayerWidget building duplicate
+        # widgets in code.
         PlayerWidget._set_button_icon(self.prev_frame_button, _PREV_FRAME_ICON_PATH, "<")
         PlayerWidget._set_button_icon(self.play_button, _PLAY_ICON_PATH, "Play")
         PlayerWidget._set_button_icon(self.next_frame_button, _NEXT_FRAME_ICON_PATH, ">")
@@ -236,6 +261,30 @@ class CommentEditor(QDialog):
         self._prev_comment_shortcut.activated.connect(self._on_prev_comment_clicked)
         self._next_comment_shortcut = QShortcut(QKeySequence("Shift+D"), self)
         self._next_comment_shortcut.activated.connect(self._on_next_comment_clicked)
+
+        # Brush color — moved here from player_widget.py's own now-removed
+        # code-built color swatch (2026-08-21 per the user's own request):
+        # this dialog owns the color state and opens QColorDialog itself,
+        # same split every other .ui-driven control here uses. Also wired
+        # to draw_overlay's own middle-click-on-canvas colorPickRequested
+        # signal, same as the removed toolbar swatch was.
+        self._brush_color = QColor("#ff3b30")
+        self._update_brush_color_button()
+        self.brush_color_button.clicked.connect(self._on_pick_brush_color)
+        self.player_widget.draw_overlay.colorPickRequested.connect(self._on_pick_brush_color)
+        self.player_widget.draw_overlay.set_color(self._brush_color)
+
+        # Speed — 0.25x-1.00x discrete steps, replacing player_widget.py's
+        # own now-removed speed_slider for this dialog.
+        self.speed_combo.addItems(["0.25x", "0.5x", "0.75x", "1.0x"])
+        self.speed_combo.setCurrentText("1.0x")
+        self.speed_combo.currentTextChanged.connect(self._on_speed_combo_changed)
+
+        # Keyframe number — replaces player_widget.py's own now-removed
+        # goto_frame_spin. Kept in sync with the player (not just editable)
+        # via _on_frame_index_changed below.
+        self.keyframe_edit.setPlaceholderText("Frame")
+        self.keyframe_edit.returnPressed.connect(self._on_keyframe_edit_entered)
 
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["", "Frame", "Comment"])
@@ -284,10 +333,37 @@ class CommentEditor(QDialog):
     def _on_playing_changed(self, playing: bool) -> None:
         PlayerWidget._set_button_icon(self.play_button, _PAUSE_ICON_PATH if playing else _PLAY_ICON_PATH, "Pause" if playing else "Play")
 
+    def _update_brush_color_button(self) -> None:
+        self.brush_color_button.setStyleSheet(
+            "background-color: {}; border: 1px solid #888;".format(self._brush_color.name())
+        )
+
+    def _on_pick_brush_color(self) -> None:
+        color = QColorDialog.getColor(self._brush_color, self, "Brush Color")
+        if color.isValid():
+            self._brush_color = color
+            self._update_brush_color_button()
+            self.player_widget.draw_overlay.set_color(color)
+
+    def _on_speed_combo_changed(self, text: str) -> None:
+        try:
+            rate = float(text.rstrip("x"))
+        except ValueError:
+            return
+        self.player_widget.set_speed(rate)
+
+    def _on_keyframe_edit_entered(self) -> None:
+        try:
+            frame_index = int(self.keyframe_edit.text().strip())
+        except ValueError:
+            return
+        self.player_widget.jump_to_frame(frame_index)
+
     # -- frame navigation / drawing persistence (in-memory only) -----------
 
     def _on_frame_index_changed(self, frame_index: int) -> None:
         self._current_frame_index = frame_index
+        self.keyframe_edit.setText(str(frame_index))
         entry = self._frames.get(str(frame_index), {})
         strokes = [Stroke.from_dict(s) for s in entry.get("strokes", [])]
         self.player_widget.draw_overlay.load_frame(strokes, entry.get("text_boxes", []))
