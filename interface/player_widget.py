@@ -78,6 +78,44 @@ class _VideoSurface(QWidget):
         painter.end()
 
 
+_FRAME_NUMBER_MARGIN = 12
+_FRAME_NUMBER_STROKE_WIDTH = 5
+_FRAME_NUMBER_POINT_SIZE = 22
+
+
+def paint_frame_number(painter: QPainter, text: str, width: int) -> None:
+    """Module-level, not a _FrameNumberOverlay method — draws `text`
+    horizontally centered, top-anchored, white fill with a black stroke
+    drawn OUTSIDE the fill (see _FrameNumberOverlay's own docstring for
+    why: stamping the black text at a ring of offset positions first, then
+    the white text once dead center on top, rather than a single
+    QPainterPath fill+stroke draw, which would eat into the fill from the
+    edges inward instead of surrounding it). Shared with
+    video_library_page.py's Get Video/Get Video - Commented exports
+    (2026-08-21) so a burned-in frame number in an exported video matches
+    this live HUD's own look exactly — same pattern draw_overlay.py's
+    paint_stroke_points already uses for stroke rendering. Assumes
+    painter's font/pen aren't needed for anything else by the caller
+    afterward (both set here, not restored)."""
+    if not text:
+        return
+    font = QFont()
+    font.setPointSize(_FRAME_NUMBER_POINT_SIZE)
+    font.setBold(True)
+    metrics = QFontMetrics(font)
+    x = (width - metrics.horizontalAdvance(text)) // 2
+    y = _FRAME_NUMBER_MARGIN + metrics.ascent()
+    painter.setFont(font)
+    painter.setPen(Qt.black)
+    w = _FRAME_NUMBER_STROKE_WIDTH
+    for dx in (-w, 0, w):
+        for dy in (-w, 0, w):
+            if dx or dy:
+                painter.drawText(x + dx, y + dy, text)
+    painter.setPen(Qt.white)
+    painter.drawText(x, y, text)
+
+
 class _FrameNumberOverlay(QWidget):
     """Always-on-top HUD showing the current frame number — white fill,
     black stroke, large bold text, per the user's own spec. Horizontally
@@ -88,28 +126,14 @@ class _FrameNumberOverlay(QWidget):
     2026-07-20-text-tool-drew-strokes-simultaneously.md were about, back
     when this plugin still had its own drawing overlay — moved to
     cache/plugins/BananaSketch/ 2026-08-08). No visibility toggle — always
-    shown.
-
-    Stroke is drawn OUTSIDE the white fill, not straddling it: a
-    QPainterPath fill+stroke draw (the first attempt) centers the pen on
-    the path outline, so half the stroke width eats into the fill from
-    the edges inward, making the glyph look *thinner*, not bolder — the
-    opposite of what "stroke ให้มัน stroke outside" asked for. Instead
-    this stamps the black text at a ring of offset positions first, then
-    paints the white text once, dead center, completely on top — the
-    black only ever shows through around the true glyph's outside edge."""
-
-    _MARGIN = 12
-    _STROKE_WIDTH = 5
+    shown. Painting itself delegates to the module-level paint_frame_number
+    above."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._text = ""
-        self._font = QFont()
-        self._font.setPointSize(22)
-        self._font.setBold(True)
 
     def set_frame_index(self, index: int) -> None:
         self._text = str(index)
@@ -122,22 +146,9 @@ class _FrameNumberOverlay(QWidget):
     def paintEvent(self, event) -> None:
         if not self._text:
             return
-        metrics = QFontMetrics(self._font)
-        # Horizontally centered (was right-aligned) per the user's own
-        # request 2026-08-21 — still top-anchored via _MARGIN.
-        x = (self.width() - metrics.horizontalAdvance(self._text)) // 2
-        y = self._MARGIN + metrics.ascent()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setFont(self._font)
-        painter.setPen(Qt.black)
-        w = self._STROKE_WIDTH
-        for dx in (-w, 0, w):
-            for dy in (-w, 0, w):
-                if dx or dy:
-                    painter.drawText(x + dx, y + dy, self._text)
-        painter.setPen(Qt.white)
-        painter.drawText(x, y, self._text)
+        paint_frame_number(painter, self._text, self.width())
         painter.end()
 
 

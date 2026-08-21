@@ -32,11 +32,11 @@ from PySide6.QtWidgets import (
 )
 
 from ukoreshot_plugin.core import comment_store, video_naming, video_path_store, video_sequence
-from ukoreshot_plugin.core.video_compress import VideoCompressionError, compress_to_fit, get_ffmpeg_path
+from ukoreshot_plugin.core.video_compress import VideoCompressionError, burn_frame_numbers, compress_to_fit, get_ffmpeg_path
 from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, push_pointer
 from ukoreshot_plugin.interface.comment_editor import CommentEditor
 from ukoreshot_plugin.interface.draw_overlay import Stroke, paint_stroke_points
-from ukoreshot_plugin.interface.player_widget import PlayerWidget
+from ukoreshot_plugin.interface.player_widget import PlayerWidget, paint_frame_number
 from ukoreshot_plugin.interface.thumbnail_loader import ThumbnailLoader
 
 _logger = logging.getLogger("UkoreShot.Library")
@@ -1054,12 +1054,18 @@ class UkoreShotPage(QWidget):
     # -- get video / get video - commented -----------------------------------
 
     def _on_get_video_clicked(self) -> None:
-        """Compresses the selected video's own source file down to
-        _MAX_EXPORT_BYTES via ffmpeg (a no-op transcode if it's already
-        under that) and copies the result into this repo's export folder,
-        overwriting whatever was there before — regenerated fresh on every
-        click, never reused, and never touched by any cloud-sync code path
-        in this plugin (see video_path_store.resolve_export_dir)."""
+        """Burns the current frame number into every frame (top-center,
+        matching player_widget.py's own _FrameNumberOverlay HUD look — see
+        video_compress.burn_frame_numbers), then compresses the result down
+        to _MAX_EXPORT_BYTES via ffmpeg (a no-op transcode if it's already
+        under that after burning), and copies the result into this repo's
+        export folder, overwriting whatever was there before — regenerated
+        fresh on every click, never reused, and never touched by any
+        cloud-sync code path in this plugin (see
+        video_path_store.resolve_export_dir). Frame-number burning always
+        re-encodes even for a small source video that compress_to_fit alone
+        would otherwise just copy unchanged — there's no way to burn text
+        into a video without decoding/re-encoding every frame."""
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None or entry.video_path is None or self._project_id is None or self._repo_id is None:
             return
@@ -1071,13 +1077,22 @@ class UkoreShotPage(QWidget):
             export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
             output_path = export_dir / "{}.mp4".format(entry.stem)
             try:
-                result_path = compress_to_fit(ffmpeg_path, entry.video_path, _MAX_EXPORT_BYTES)
+                self._set_status_message("Stamping frame numbers...")
+                burned_path = burn_frame_numbers(ffmpeg_path, entry.video_path)
+                self._set_status_message("Compressing video...")
+                result_path = compress_to_fit(ffmpeg_path, burned_path, _MAX_EXPORT_BYTES)
             except VideoCompressionError as exc:
                 _logger.warning("Get Video failed for %s: %s", entry.video_path, exc)
                 QMessageBox.warning(self, "Get Video Failed", str(exc))
                 return
             shutil.copy2(result_path, output_path)
-            if result_path != entry.video_path:
+            # burned_path's own temp dir is always ours to clean up (unlike
+            # entry.video_path, the real source file); result_path is
+            # either that same burned_path (compress_to_fit's "already
+            # under the cap" fast path) or a second, separate temp dir of
+            # its own — clean up whichever of those actually got created.
+            shutil.rmtree(burned_path.parent, ignore_errors=True)
+            if result_path != burned_path:
                 shutil.rmtree(result_path.parent, ignore_errors=True)
             _logger.info("Get Video: wrote %s", output_path)
         finally:
@@ -1132,19 +1147,24 @@ class UkoreShotPage(QWidget):
             for index, frame_path in enumerate(frame_paths):
                 image = QImage(str(frame_path))
                 strokes = frames_meta.get(str(index), {}).get("strokes", [])
-                if strokes:
-                    painter = QPainter(image)
-                    painter.setRenderHint(QPainter.Antialiasing)
-                    for stroke in strokes:
-                        paint_stroke_points(
-                            painter,
-                            [tuple(p) for p in stroke.get("points", [])],
-                            QColor(stroke.get("color", "#ff3b30")),
-                            int(stroke.get("width", 4)),
-                            image.width(),
-                            image.height(),
-                        )
-                    painter.end()
+                # Painter now always runs (not just when strokes exist) —
+                # the frame number is stamped on every frame regardless of
+                # whether it has a saved drawing, per the user's own
+                # request that Get Video - Commented burn it in the same
+                # as the plain Get Video export does.
+                painter = QPainter(image)
+                painter.setRenderHint(QPainter.Antialiasing)
+                for stroke in strokes:
+                    paint_stroke_points(
+                        painter,
+                        [tuple(p) for p in stroke.get("points", [])],
+                        QColor(stroke.get("color", "#ff3b30")),
+                        int(stroke.get("width", 4)),
+                        image.width(),
+                        image.height(),
+                    )
+                paint_frame_number(painter, str(index), image.width())
+                painter.end()
                 image.save(str(render_dir / "frame.{:05d}.png".format(index + 1)))
 
             audio_path = video_sequence.audio_path_for(sequence_dir, sequence_dir.name)

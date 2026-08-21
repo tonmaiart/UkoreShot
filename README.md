@@ -54,14 +54,16 @@ further detail):
   keyframe here too, same as `CommentEditor`'s own shortcut.
   `pushButton_sort_oldest` was removed from `UkoreShotPage.ui` 2026-08-21
   (name-ascending/newest-first are the only sort modes left).
-  `pushButton_show_comment_toggle` (icon `comment_mode.png`, checkable)
-  toggles `player_widget.py`'s new `_CommentOverlay` — a read-only
-  rendering of the current frame's saved strokes over the video, the plain
-  viewer's counterpart to `DrawOverlay`'s live drawing canvas, without
-  needing to open the full `CommentEditor` (2026-08-21). `UkoreShotPage`
-  caches the selected entry's whole `comments.json` "frames" dict once per
-  selection (`_current_entry_frames`) rather than re-reading it from disk
-  on every frame tick during playback. `pushButton_edit_message` in
+  `pushButton_show_comment_toggle` (checkable) toggles `player_widget.py`'s
+  new `_CommentOverlay` — a read-only rendering of the current frame's
+  saved strokes over the video, the plain viewer's counterpart to
+  `DrawOverlay`'s live drawing canvas, without needing to open the full
+  `CommentEditor` (2026-08-21). `UkoreShotPage` caches the selected
+  entry's whole `comments.json` "frames" dict once per selection
+  (`_current_entry_frames`) rather than re-reading it from disk on every
+  frame tick during playback. The button's own icon swaps with its state
+  (`_update_show_comment_icon`) — `comment_mode.png` while showing
+  comments, `icons8-video-50.png` while off. `pushButton_edit_message` in
   `CommentEditor` shows its "Edit" label alongside its icon (every other
   icon button here is icon-only) and now also works with no table row
   selected — it falls back to adding a comment on whichever frame the
@@ -187,17 +189,24 @@ fresh Mark as Share for every comment.
 Added 2026-08-21: `pushButton_get_video`/`pushButton_get_video_commented`
 in `video_library_page.py` each generate a fresh, hard-capped-at-20MB
 `.mp4` on click, then reveal+select it in Windows Explorer
-(`explorer /select,`). Get Video just compresses the selected video's own
-source file (`core/video_compress.py`'s `compress_to_fit`, unchanged if
-already under the cap); Get Video - Commented composites each extracted
-frame's saved drawing (`draw_overlay.py`'s `paint_stroke_points`) onto its
-own image first, then encodes that sequence back into a video
-(`core/video_sequence.py`'s `encode_sequence_to_video`) before the same
-compression pass. Both write into a dedicated per-repo export folder
-(`core/video_path_store.py`'s `resolve_export_dir`, a sibling of the video
-library root, never scanned by it) — **local-only, overwritten fresh on
-every click, and never touched by any cloud-sync code path in this
-plugin** (confirmed with the user: this output must never be synced).
+(`explorer /select,`). Get Video burns the frame number into every frame
+first (`core/video_compress.py`'s `burn_frame_numbers`, ffmpeg's
+`drawtext`, always re-encodes) then compresses the result
+(`compress_to_fit`, unchanged if already under the cap after burning);
+Get Video - Commented composites each extracted frame's saved drawing
+(`draw_overlay.py`'s `paint_stroke_points`) *and* its frame number
+(`player_widget.py`'s `paint_frame_number`, the same module-level function
+`_FrameNumberOverlay`'s live HUD itself calls, so the burned-in number
+matches the live viewer's look exactly) onto its own image first, then
+encodes that sequence back into a video (`core/video_sequence.py`'s
+`encode_sequence_to_video`) before the same compression pass — both paths
+burn the number in regardless of whether the video actually has any saved
+comments/strokes (2026-08-21, per the user's own request). Both write
+into a dedicated per-repo export folder (`core/video_path_store.py`'s
+`resolve_export_dir`, a sibling of the video library root, never scanned
+by it) — **local-only, overwritten fresh on every click, and never
+touched by any cloud-sync code path in this plugin** (confirmed with the
+user: this output must never be synced).
 
 **Working here:** stay inside this plugin folder unless the change needs a
 new top-level `core/` primitive. `maya-scripts/`'s output is read-only

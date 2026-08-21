@@ -551,41 +551,26 @@ class CommentEditor(QDialog):
         return sorted(indices)
 
     def _refresh_table(self) -> None:
+        # No more composer row for whichever frame the player currently
+        # happens to be on (removed 2026-08-21, per the user's own
+        # request) — a frame only ever gets a row here once it actually
+        # has a comment or a drawing (see _keyframe_indices), never just
+        # for being on screen. pushButton_edit_message still works with no
+        # row selected (see _on_edit_message_clicked's own fallback to the
+        # current frame), so adding the first comment/drawing to a frame
+        # doesn't require a row to already exist — it's just that nothing
+        # shows up here until something is actually saved.
         rows: list[tuple[int, dict | None]] = []
         for frame_index in self._keyframe_indices():
             entry = self._frames.get(str(frame_index), {})
             comments = entry.get("comments", [])
             if comments:
-                # Always listed, even for the current frame — see the
-                # composer-row note below for how the current frame's own
-                # row set and the composer row now stay mutually exclusive
-                # instead of duplicating each other.
                 for comment in comments:
                     rows.append((frame_index, comment))
-            elif frame_index != self._current_frame_index:
-                # Has strokes but no text comment yet, and isn't the frame
-                # on screen right now — still shows up, per the user's own
-                # request, as a blank row you can type into. The current
-                # frame's own blank case is covered by the trailing
-                # composer row instead, so it isn't duplicated here.
+            else:
+                # Has strokes but no text comment yet — still shows up as
+                # a blank row you can type into.
                 rows.append((frame_index, None))
-
-        # The composer row (for whichever frame the player is currently on)
-        # only gets added when that frame has no comment rows of its own
-        # yet — fixed 2026-08-21 after a real duplicate-row report: this
-        # used to be appended *unconditionally*, so landing on a frame that
-        # already had a comment showed that comment's own row *and* a
-        # second, blank "37" row for the exact same frame right below it —
-        # confusing, looked like a stray duplicate keyframe rather than "an
-        # empty slot to add one more comment". Now the composer row exists
-        # only to give an otherwise-row-less current frame something to
-        # select and click Edit Message on. bisect_right (when it does
-        # apply) places it after any existing rows for that same frame,
-        # keeping the whole table in ascending frame order.
-        current_key = str(self._current_frame_index)
-        if not self._frames.get(current_key, {}).get("comments"):
-            insert_at = bisect.bisect_right([r[0] for r in rows], self._current_frame_index)
-            rows.insert(insert_at, (self._current_frame_index, None))
 
         self._suppress_selection_jump = True
         self.table.setRowCount(len(rows))

@@ -187,3 +187,68 @@ def compress_to_fit(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Path:
     if result.returncode != 0 or not output_path.is_file():
         raise VideoCompressionError(f"ffmpeg failed to compress {video_path.name}: {result.stderr[-500:]}")
     return output_path
+
+
+# Windows ffmpeg builds have no fontconfig (that's a Unix font-matching
+# library) — drawtext needs an explicit fontfile= path to a real .ttf,
+# rather than resolving a font by name the way it can on Linux/macOS.
+# Arial Bold ships with every Windows install, matching this plugin's
+# other Windows-only conventions (the win64 ffmpeg auto-download,
+# explorer /select, reveal — see this module's own _FFMPEG_DOWNLOAD_URL).
+_FRAME_NUMBER_FONT_PATH = r"C:\Windows\Fonts\arialbd.ttf"
+
+
+def _escape_ffmpeg_filter_path(path: str) -> str:
+    """ffmpeg's filtergraph mini-language uses ":" to separate a filter's
+    own options and "\\" as its escape character, so a raw Windows path
+    (drive-letter colon, backslash separators) can't be dropped into a
+    filter option value as-is. Forward slashes work fine on Windows ffmpeg
+    builds too, so converting to those sidesteps needing to escape every
+    backslash — only the drive-letter colon still needs an explicit
+    escape."""
+    return path.replace("\\", "/").replace(":", r"\:")
+
+
+def burn_frame_numbers(ffmpeg_path: str, video_path: Path) -> Path:
+    """Re-encodes video_path with the current frame number burned into
+    every frame, top-center, white fill with a black outline (drawtext's
+    own bordercolor/borderw — visually close to player_widget.py's
+    _FrameNumberOverlay/paint_frame_number's own stamped-offsets
+    technique, without needing a separate per-frame Qt compositing pass
+    the way Get Video - Commented's already frame-by-frame pipeline uses
+    instead — see video_library_page.py's _render_commented_video for
+    that one). "%{n}" is drawtext's own current-output-frame-number
+    expression, 0-based, matching every other "frame index" already used
+    throughout this codebase.
+
+    Always re-encodes, even if the source is already small enough that
+    compress_to_fit would otherwise just copy it unchanged — there's no
+    way to burn text into a video without decoding/re-encoding every
+    frame. Returns a path into a fresh temp directory; the caller owns
+    cleaning it up (same convention compress_to_fit's own transcoded
+    output uses)."""
+    drawtext = (
+        "drawtext=fontfile={}:text='%{{n}}':fontcolor=white:fontsize=48:"
+        "bordercolor=black:borderw=5:x=(w-text_w)/2:y=20"
+    ).format(_escape_ffmpeg_filter_path(_FRAME_NUMBER_FONT_PATH))
+    output_path = Path(tempfile.mkdtemp(prefix="ukorehub_framenum_")) / f"{video_path.stem}_framenum.mp4"
+    result = subprocess.run(
+        [
+            ffmpeg_path,
+            "-y",
+            "-i", str(video_path),
+            "-map", "0:v:0",
+            "-map", "0:a:0?",
+            "-vf", drawtext,
+            "-movflags", "+faststart",
+            str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0 or not output_path.is_file():
+        raise VideoCompressionError(
+            f"ffmpeg failed to burn frame numbers into {video_path.name}: {result.stderr[-500:]}"
+        )
+    return output_path
