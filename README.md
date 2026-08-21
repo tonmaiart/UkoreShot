@@ -63,15 +63,24 @@ further detail):
   (`_current_entry_frames`) rather than re-reading it from disk on every
   frame tick during playback. The button's own icon swaps with its state
   (`_update_show_comment_icon`) — `comment_mode.png` while showing
-  comments, `icons8-video-50.png` while off. `pushButton_edit_message` in
-  `CommentEditor` now also works with no table row selected — it falls
-  back to adding a comment on whichever frame the player is currently on.
+  comments, `icons8-video-50.png` while off.
   `CommentEditor`'s Keyframe Comment table no longer auto-adds a row for
   whichever frame the player happens to be on (removed 2026-08-21, per the
   user's own request) — a frame only ever gets a row once it actually has
   a saved comment or drawing (`_keyframe_indices`), not just for being on
-  screen. `pushButton_clear_frame`/`pushButton_edit_message` also went
-  back to plain, icon-less buttons the same day, using
+  screen; clearing a comment's text down to blank now removes that comment
+  entirely (`_apply_comment_text`) instead of leaving a meaningless
+  blank-text one behind, so a frame left with neither a comment nor a
+  drawing disappears from the list on its own via
+  `_record_frame_change`'s existing "pop the frame if empty" logic.
+  `pushButton_clear_frame`/`pushButton_edit_message` always operate on
+  whichever frame the player is currently on
+  (`self._current_frame_index`) — never whatever row happens to be
+  selected in the table, which is a separate, independently-driven piece
+  of state that can drift out of sync with it. `pushButton_edit_message`
+  also works with no table row selected at all (edits the current frame's
+  first existing comment if it has one, else composes a new one). Both
+  buttons went back to plain, icon-less buttons the same day, using
   `CommentEditor.ui`'s own original labels ("Clean Draw"/"Edit Message")
   instead of `_set_button_icon`'s usual icon-only look.
   `player_widget.py`'s `PlayerWidget` plays either a real video file
@@ -196,9 +205,16 @@ Added 2026-08-21: `pushButton_get_video`/`pushButton_get_video_commented`
 in `video_library_page.py` each generate a fresh, hard-capped-at-20MB
 `.mp4` on click, then reveal+select it in Windows Explorer
 (`explorer /select,`). Get Video burns the frame number into every frame
-first (`core/video_compress.py`'s `burn_frame_numbers`, ffmpeg's
-`drawtext`, always re-encodes) then compresses the result
-(`compress_to_fit`, unchanged if already under the cap after burning);
+via ffmpeg's `drawtext` while *also* targeting `_MAX_EXPORT_BYTES` in that
+same single ffmpeg call (`core/video_compress.py`'s `burn_frame_numbers`,
+which computes the same duration-based bitrate `compress_to_fit` itself
+uses via the shared `_calculate_video_bitrate` — merged from an earlier
+burn-then-compress two-pass version the same day, since burning text
+already forces one full re-encode regardless of the source's own size, so
+targeting the byte cap in that same pass avoids a second, redundant
+re-encode). `compress_to_fit`/`burn_frame_numbers` both pass
+`-preset veryfast` to libx264 (not the slower `medium` default) — a
+quick local export doesn't need mastered-quality encoding efficiency.
 Get Video - Commented composites each extracted frame's saved drawing
 (`draw_overlay.py`'s `paint_stroke_points`) *and* its frame number
 (`player_widget.py`'s `paint_frame_number`, the same module-level function

@@ -1055,21 +1055,20 @@ class UkoreShotPage(QWidget):
 
     def _on_get_video_clicked(self) -> None:
         """Burns the current frame number into every frame (top-center,
-        matching player_widget.py's own _FrameNumberOverlay HUD look — see
-        video_compress.burn_frame_numbers), then compresses the result down
-        to _MAX_EXPORT_BYTES via ffmpeg (a no-op transcode if it's already
-        under that after burning), and copies the result into this repo's
-        export folder, overwriting whatever was there before — regenerated
-        fresh on every click, never reused, and never touched by any
-        cloud-sync code path in this plugin (see
-        video_path_store.resolve_export_dir). Frame-number burning always
-        re-encodes even for a small source video that compress_to_fit alone
-        would otherwise just copy unchanged — there's no way to burn text
-        into a video without decoding/re-encoding every frame."""
+        matching player_widget.py's own _FrameNumberOverlay HUD look) while
+        also targeting _MAX_EXPORT_BYTES, in one single ffmpeg pass (see
+        video_compress.burn_frame_numbers — merged from a burn-then-
+        compress two-pass version 2026-08-21, which made Get Video
+        noticeably slower since burning text already forces a full
+        re-encode regardless of the source's own size), then copies the
+        result into this repo's export folder, overwriting whatever was
+        there before — regenerated fresh on every click, never reused, and
+        never touched by any cloud-sync code path in this plugin (see
+        video_path_store.resolve_export_dir)."""
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None or entry.video_path is None or self._project_id is None or self._repo_id is None:
             return
-        self._show_status("Compressing video...")
+        self._show_status("Rendering video...")
         try:
             ffmpeg_path = self._resolve_ffmpeg()
             if ffmpeg_path is None:
@@ -1077,23 +1076,16 @@ class UkoreShotPage(QWidget):
             export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
             output_path = export_dir / "{}.mp4".format(entry.stem)
             try:
-                self._set_status_message("Stamping frame numbers...")
-                burned_path = burn_frame_numbers(ffmpeg_path, entry.video_path)
-                self._set_status_message("Compressing video...")
-                result_path = compress_to_fit(ffmpeg_path, burned_path, _MAX_EXPORT_BYTES)
+                result_path = burn_frame_numbers(ffmpeg_path, entry.video_path, _MAX_EXPORT_BYTES)
             except VideoCompressionError as exc:
                 _logger.warning("Get Video failed for %s: %s", entry.video_path, exc)
                 QMessageBox.warning(self, "Get Video Failed", str(exc))
                 return
             shutil.copy2(result_path, output_path)
-            # burned_path's own temp dir is always ours to clean up (unlike
-            # entry.video_path, the real source file); result_path is
-            # either that same burned_path (compress_to_fit's "already
-            # under the cap" fast path) or a second, separate temp dir of
-            # its own — clean up whichever of those actually got created.
-            shutil.rmtree(burned_path.parent, ignore_errors=True)
-            if result_path != burned_path:
-                shutil.rmtree(result_path.parent, ignore_errors=True)
+            # Always a fresh temp dir of its own (burn_frame_numbers always
+            # re-encodes, unlike compress_to_fit's own "return video_path
+            # unchanged" fast path) — always ours to clean up.
+            shutil.rmtree(result_path.parent, ignore_errors=True)
             _logger.info("Get Video: wrote %s", output_path)
         finally:
             self._hide_status()

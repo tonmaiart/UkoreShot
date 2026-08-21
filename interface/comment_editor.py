@@ -307,6 +307,13 @@ class CommentEditor(QDialog):
         # strokes and comments, see _push_undo_snapshot's docstring.
         self.undo_button.clicked.connect(self._on_undo)
         self.redo_button.clicked.connect(self._on_redo)
+        # draw_overlay.clear_frame() takes no frame argument — it only ever
+        # clears whichever frame's strokes DrawOverlay currently has loaded
+        # (load_frame, called from _on_frame_index_changed below), so
+        # Clean Draw is inherently scoped to self._current_frame_index —
+        # never whatever's selected in the Keyframe Comment table, same
+        # guarantee _on_edit_message_clicked's own docstring spells out
+        # explicitly for Edit Message.
         self.clear_button.clicked.connect(self.player_widget.draw_overlay.clear_frame)
         self.edit_message_button.clicked.connect(self._on_edit_message_clicked)
         self._prev_comment_shortcut = QShortcut(QKeySequence("Shift+A"), self)
@@ -625,12 +632,15 @@ class CommentEditor(QDialog):
             self.player_widget.jump_to_frame(later[0])
 
     def _apply_comment_text(self, frame_index: int, comment_id: str | None, text: str) -> None:
-        """Shared by _on_edit_message_clicked — comment_id=None means the
-        composer row (add a new comment to frame_index), otherwise edits
-        the existing comment with that id in place. Was previously inline
-        in _on_table_item_changed (removed 2026-08-21 along with the
-        table's own in-cell editing — see the table's setEditTriggers
-        note)."""
+        """Shared by _on_edit_message_clicked — comment_id=None means add a
+        new comment to frame_index, otherwise edits the existing comment
+        with that id in place. Clearing an existing comment down to blank
+        text removes it entirely (2026-08-21, per the user's own request)
+        rather than leaving a meaningless blank-text comment behind — a
+        frame this leaves with neither comments nor strokes then
+        disappears from the Keyframe Comment list on its own, via
+        _record_frame_change's own "pop the frame if the resulting entry
+        is empty" logic below; nothing extra needed here for that."""
         comments = list(self._frames.get(str(frame_index), {}).get("comments", []))
         if comment_id is None:
             if not text:
@@ -643,6 +653,8 @@ class CommentEditor(QDialog):
                     "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }
             )
+        elif not text:
+            comments = [c for c in comments if c.get("id") != comment_id]
         else:
             for comment in comments:
                 if comment.get("id") == comment_id:
@@ -651,34 +663,22 @@ class CommentEditor(QDialog):
         self._record_frame_change(frame_index, comments=comments)
 
     def _on_edit_message_clicked(self) -> None:
-        """pushButton_edit_message — added 2026-08-21 alongside making
-        tableWidget_comment read-only: the only way to add/edit a
-        comment's text now, via a QInputDialog instead of in-cell editing.
-        Operates on whichever row is currently selected (the composer row
-        for the current frame, or an existing comment row) — but no row
-        stays selected after every frame change (_refresh_table rebuilds
-        the table's items from scratch, dropping any prior current row), so
-        requiring a row selected first meant clicking this button right
-        after navigating to a frame silently did nothing. With no row
-        selected, this now falls back to the composer behavior for
-        whichever frame the player is currently on (comment_id=None — adds
-        a new comment there), so the button always works immediately
-        without needing a list click first (2026-08-21, per the user's own
-        request)."""
-        row = self.table.currentRow()
-        if row < 0:
-            frame_index = self._current_frame_index
-            comment_id = None
-            current_text = ""
-        else:
-            item = self.table.item(row, _COL_COMMENT)
-            if item is None:
-                return
-            frame_index = item.data(Qt.UserRole + 1)
-            if frame_index is None:
-                frame_index = self._current_frame_index
-            comment_id = item.data(Qt.UserRole)
-            current_text = item.text()
+        """pushButton_edit_message — always operates on whichever frame the
+        player is currently on (self._current_frame_index), never whatever
+        row happens to be selected in the Keyframe Comment table
+        (2026-08-21, per the user's own request). Selecting a row does
+        jump the player there (_on_table_row_selected), so in practice the
+        two normally agree — but reading self.table.currentRow() as a
+        second, separate source of "which frame" made this button's actual
+        target ambiguous whenever they didn't (e.g. a stale current-row
+        index left over from before _refresh_table last rebuilt the
+        table's rows from scratch). Edits the current frame's first
+        existing comment if it already has one (a frame only ever carries
+        one review comment in practice), otherwise composes a new one."""
+        frame_index = self._current_frame_index
+        comments = self._frames.get(str(frame_index), {}).get("comments", [])
+        comment_id = comments[0].get("id") if comments else None
+        current_text = comments[0].get("text", "") if comments else ""
         text, ok = QInputDialog.getText(self, "Edit Comment", "Comment:", text=current_text)
         if not ok:
             return

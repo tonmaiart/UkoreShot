@@ -135,15 +135,29 @@ def _probe_duration_seconds(ffmpeg_path: str, video_path: Path) -> float:
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
+def _calculate_video_bitrate(video_path: Path, max_bytes: int, duration: float) -> int:
+    """Shared by compress_to_fit and burn_frame_numbers — same single-pass,
+    duration-based target-bitrate math both use to land close to
+    max_bytes, not frame-accurate like a proper two-pass encode would be
+    (which would roughly double encode time for a use case that doesn't
+    need that precision)."""
+    target_bits = max_bytes * 8 * _SIZE_SAFETY_MARGIN
+    video_bitrate = int(target_bits / duration) - _AUDIO_BITRATE_BPS
+    if video_bitrate < _MIN_VIDEO_BITRATE_BPS:
+        raise VideoCompressionError(
+            f"{video_path.name} is too long ({duration:.0f}s) to fit under the configured upload limit even "
+            "at the lowest usable quality — trim it, or raise Max Upload Size if the Discord server allows it."
+        )
+    return video_bitrate
+
+
 def compress_to_fit(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Path:
     """Transcodes video_path down to a temp .mp4 that fits under max_bytes,
-    at a single-pass bitrate calculated from its duration — good enough to
-    land close to the target, not frame-accurate like a proper two-pass
-    encode would be, which would roughly double the encode time for a use
-    case (fitting under Discord's upload cap) that doesn't need that
-    precision. Returns video_path unchanged if it's already under
-    max_bytes (no transcode at all) — the caller should only clean up the
-    returned path's parent directory when it's *not* video_path itself."""
+    at a single-pass bitrate calculated from its duration (see
+    _calculate_video_bitrate). Returns video_path unchanged if it's
+    already under max_bytes (no transcode at all) — the caller should only
+    clean up the returned path's parent directory when it's *not*
+    video_path itself."""
     if video_path.stat().st_size <= max_bytes:
         return video_path
 
@@ -152,14 +166,7 @@ def compress_to_fit(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Path:
         raise VideoCompressionError(
             f"{video_path.name} reported a zero-length duration — can't calculate a compression target."
         )
-
-    target_bits = max_bytes * 8 * _SIZE_SAFETY_MARGIN
-    video_bitrate = int(target_bits / duration) - _AUDIO_BITRATE_BPS
-    if video_bitrate < _MIN_VIDEO_BITRATE_BPS:
-        raise VideoCompressionError(
-            f"{video_path.name} is too long ({duration:.0f}s) to fit under the configured upload limit even "
-            "at the lowest usable quality — trim it, or raise Max Upload Size if the Discord server allows it."
-        )
+    video_bitrate = _calculate_video_bitrate(video_path, max_bytes, duration)
 
     output_path = Path(tempfile.mkdtemp(prefix="ukorehub_discord_")) / f"{video_path.stem}_compressed.mp4"
     result = subprocess.run(
@@ -177,6 +184,12 @@ def compress_to_fit(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Path:
             "-map", "0:a:0?",
             "-b:v", str(video_bitrate),
             "-b:a", str(_AUDIO_BITRATE_BPS),
+            # veryfast, not the libx264 default (medium) — this is a quick
+            # local export, not a mastered deliverable, so trading a little
+            # compression efficiency for noticeably faster encoding is the
+            # right call (2026-08-21, per the user's own request to speed
+            # Get Video up).
+            "-preset", "veryfast",
             "-movflags", "+faststart",
             str(output_path),
         ],
@@ -209,7 +222,7 @@ def _escape_ffmpeg_filter_path(path: str) -> str:
     return path.replace("\\", "/").replace(":", r"\:")
 
 
-def burn_frame_numbers(ffmpeg_path: str, video_path: Path) -> Path:
+def burn_frame_numbers(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Path:
     """Re-encodes video_path with the current frame number burned into
     every frame, top-center, white fill with a black outline (drawtext's
     own bordercolor/borderw — visually close to player_widget.py's
@@ -221,12 +234,25 @@ def burn_frame_numbers(ffmpeg_path: str, video_path: Path) -> Path:
     expression, 0-based, matching every other "frame index" already used
     throughout this codebase.
 
-    Always re-encodes, even if the source is already small enough that
-    compress_to_fit would otherwise just copy it unchanged — there's no
-    way to burn text into a video without decoding/re-encoding every
-    frame. Returns a path into a fresh temp directory; the caller owns
-    cleaning it up (same convention compress_to_fit's own transcoded
-    output uses)."""
+    Also applies the same duration-based target bitrate compress_to_fit
+    uses (_calculate_video_bitrate), in this same ffmpeg call, instead of
+    a separate compress_to_fit() pass afterward (2026-08-21 — the original
+    two-pass version made Get Video noticeably slower, since burning text
+    already forces one full re-encode regardless of the source's own
+    size; targeting max_bytes in that same pass means there's only ever
+    one re-encode total, with the same "fits under max_bytes" guarantee
+    compress_to_fit's own two-step version had). Always re-encodes, even
+    for a source already small enough that compress_to_fit alone would've
+    just copied unchanged — there's no way to burn text into a video
+    without decoding/re-encoding every frame. Returns a path into a fresh
+    temp directory; the caller owns cleaning it up."""
+    duration = _probe_duration_seconds(ffmpeg_path, video_path)
+    if duration <= 0:
+        raise VideoCompressionError(
+            f"{video_path.name} reported a zero-length duration — can't calculate a compression target."
+        )
+    video_bitrate = _calculate_video_bitrate(video_path, max_bytes, duration)
+
     drawtext = (
         "drawtext=fontfile={}:text='%{{n}}':fontcolor=white:fontsize=48:"
         "bordercolor=black:borderw=5:x=(w-text_w)/2:y=20"
@@ -240,6 +266,9 @@ def burn_frame_numbers(ffmpeg_path: str, video_path: Path) -> Path:
             "-map", "0:v:0",
             "-map", "0:a:0?",
             "-vf", drawtext,
+            "-b:v", str(video_bitrate),
+            "-b:a", str(_AUDIO_BITRATE_BPS),
+            "-preset", "veryfast",
             "-movflags", "+faststart",
             str(output_path),
         ],
