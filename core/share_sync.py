@@ -15,6 +15,7 @@ to enumerate what a bucket contains."""
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import tempfile
@@ -34,6 +35,15 @@ from ukoreshot_plugin.core.video_sequence import audio_path_for
 _logger = logging.getLogger("UkoreShot.ShareSync")
 
 _POINTER_PREFIX = "ukore_shot/share_codes"
+
+# Every frame push/pull is its own R2 (S3-compatible) HTTP round-trip —
+# boto3/botocore clients are documented thread-safe for concurrent calls,
+# so running several at once (instead of one file at a time, sequentially)
+# is a pure wall-clock win for a shot with hundreds of frames, bounded by
+# network bandwidth rather than by waiting on each round-trip in turn.
+# Kept modest rather than unbounded to avoid hammering R2 with a huge burst
+# of simultaneous connections for a very long shot.
+_MAX_CONCURRENT_TRANSFERS = 6
 
 
 def _blob_prefix(project_id: str, repo_id: str, stem: str) -> str:
@@ -101,22 +111,47 @@ class ShareUploadWorker(QThread):
 
     def run(self) -> None:
         prefix = _blob_prefix(self._project_id, self._repo_id, self._sequence_dir.name)
-        _logger.info("ShareUploadWorker: uploading %s to %s", self._sequence_dir, prefix)
+        local_paths = [p for p in sorted(self._sequence_dir.iterdir()) if p.is_file()]
+        _logger.info(
+            "ShareUploadWorker: uploading %d file(s) from %s to %s", len(local_paths), self._sequence_dir, prefix
+        )
+
+        def _push_one(local_path: Path) -> bool:
+            """True on a real push, False for a ConflictError (last-write-
+            wins is correct for a shared asset, not a real conflict to
+            surface — same reasoning launcher.py::_push_asset already
+            documents for thumbnails/program_icons) — either way, not an
+            error."""
+            blob_name = "{}/{}".format(prefix, local_path.name)
+            try:
+                self._cloud_sync.push(blob_name, local_path)
+                return True
+            except ConflictError:
+                _logger.debug("ConflictError pushing %s — ignored (last-write-wins)", blob_name)
+                return False
+
         try:
             pushed = 0
-            for local_path in sorted(self._sequence_dir.iterdir()):
-                if not local_path.is_file():
-                    continue
-                blob_name = "{}/{}".format(prefix, local_path.name)
-                try:
-                    self._cloud_sync.push(blob_name, local_path)
-                    pushed += 1
-                except ConflictError:
-                    # Last-write-wins is correct for a shared asset, not a
-                    # real conflict to surface — same reasoning
-                    # launcher.py::_push_asset already documents for
-                    # thumbnails/program_icons.
-                    _logger.debug("ConflictError pushing %s — ignored (last-write-wins)", blob_name)
+            # Concurrent, not one file at a time — see _MAX_CONCURRENT_
+            # TRANSFERS. Every upload still runs to completion even if one
+            # fails (a deliberate change from the old sequential version's
+            # "stop at the first failure" — cancelling in-flight uploads
+            # here would just leave a partially-uploaded share on R2 for no
+            # real benefit); the first real error seen is what actually
+            # gets raised/reported below.
+            first_error: Exception | None = None
+            with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_TRANSFERS) as pool:
+                futures = {pool.submit(_push_one, local_path): local_path for local_path in local_paths}
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        if future.result():
+                            pushed += 1
+                    except Exception as exc:  # noqa: BLE001 - collected below, every other in-flight upload still finishes
+                        _logger.exception("ShareUploadWorker: failed to push %s", futures[future])
+                        if first_error is None:
+                            first_error = exc
+            if first_error is not None:
+                raise first_error
         except Exception as exc:  # noqa: BLE001 - surfaced to the UI as a message, never crashes
             _logger.exception("ShareUploadWorker failed for %s", self._sequence_dir)
             self.failed.emit(str(exc))
@@ -197,9 +232,27 @@ class PullByCodeWorker(QThread):
             _logger.info("PullByCodeWorker: pulling %s (%d frame(s)) from %s", stem, frame_count, prefix)
             sequence_dir = self._video_root / stem
             sequence_dir.mkdir(parents=True, exist_ok=True)
-            for index in range(1, frame_count + 1):
+
+            def _pull_frame(index: int) -> None:
                 filename = "{}.{:05d}.{}".format(stem, index, image_format)
                 self._cloud_sync.pull("{}/{}".format(prefix, filename), sequence_dir / filename)
+
+            # Concurrent, not one frame at a time — same reasoning as
+            # ShareUploadWorker's own _MAX_CONCURRENT_TRANSFERS above; every
+            # frame still gets attempted even if one fails, and the first
+            # real error seen is what actually gets raised below.
+            first_error: Exception | None = None
+            with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_TRANSFERS) as pool:
+                futures = {pool.submit(_pull_frame, index): index for index in range(1, frame_count + 1)}
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as exc:  # noqa: BLE001 - collected below, every other in-flight pull still finishes
+                        _logger.exception("PullByCodeWorker: failed to pull frame %d for %s", futures[future], stem)
+                        if first_error is None:
+                            first_error = exc
+            if first_error is not None:
+                raise first_error
             self._cloud_sync.pull(
                 "{}/comments.json".format(prefix), comment_store.metadata_path(sequence_dir)
             )

@@ -336,6 +336,9 @@
            <property name="placeholderText">
             <string>ค้นหาหรือกรอกรหัส Share</string>
            </property>
+           <property name="clearButtonEnabled">
+            <bool>true</bool>
+           </property>
           </widget>
          </item>
          <item row="3" column="0">
@@ -392,7 +395,7 @@
            <item>
             <widget class="QPushButton" name="pushButton_delete_playblast">
              <property name="text">
-              <string>Delete</string>
+              <string>ลบวิดีโอ</string>
              </property>
             </widget>
            </item>
@@ -409,22 +412,39 @@
           </widget>
          </item>
          <item row="1" column="0">
-          <widget class="QPushButton" name="pushButton_reload">
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>30</height>
-            </size>
-           </property>
-           <property name="font">
-            <font>
-             <pointsize>10</pointsize>
-            </font>
-           </property>
-           <property name="text">
-            <string>รีโหลดคลัง</string>
-           </property>
-          </widget>
+          <layout class="QHBoxLayout" name="horizontalLayout_2">
+           <item>
+            <spacer name="horizontalSpacer_6">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>40</width>
+               <height>20</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QPushButton" name="pushButton_reload">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>30</height>
+              </size>
+             </property>
+             <property name="font">
+              <font>
+               <pointsize>10</pointsize>
+              </font>
+             </property>
+             <property name="text">
+              <string>รีโหลดคลัง</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
          </item>
         </layout>
        </widget>

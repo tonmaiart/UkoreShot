@@ -35,7 +35,7 @@ from ukoreshot_plugin.core import comment_store, video_naming, video_path_store,
 from ukoreshot_plugin.core.video_compress import VideoCompressionError, compress_to_fit, get_ffmpeg_path
 from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, push_pointer
 from ukoreshot_plugin.interface.comment_editor import CommentEditor
-from ukoreshot_plugin.interface.draw_overlay import paint_stroke_points
+from ukoreshot_plugin.interface.draw_overlay import Stroke, paint_stroke_points
 from ukoreshot_plugin.interface.player_widget import PlayerWidget
 from ukoreshot_plugin.interface.thumbnail_loader import ThumbnailLoader
 
@@ -180,6 +180,12 @@ class UkoreShotPage(QWidget):
         self._selected_key: str | None = None
         self._sort_mode = _DEFAULT_SORT
         self._current_frame_index = 0
+        # pushButton_show_comment_toggle state — _current_entry_frames is
+        # the selected entry's whole comments.json "frames" dict, cached
+        # once per selection (not re-read from disk on every frame tick
+        # during playback — see _load_selected_entry/_refresh_frame_strokes).
+        self._show_comments = False
+        self._current_entry_frames: dict = {}
         self._share_worker: ShareUploadWorker | None = None
         self._pull_worker: PullByCodeWorker | None = None
         self._thumbnail_loader = ThumbnailLoader(self)
@@ -219,9 +225,10 @@ class UkoreShotPage(QWidget):
         self.next_comment_button: QPushButton = find(QPushButton, "pushButton_next_comment")
         self.speed_combo: QComboBox = find(QComboBox, "comboBox_speed")
         self.keyframe_edit: QLineEdit = find(QLineEdit, "lineEdit_keyframe")
-        # Found so a missing-widget error still logs if it's ever removed,
-        # but left unwired — its intended behavior (toggle what, exactly?)
-        # hasn't been specified yet; ask before building it.
+        # Toggles player_widget.py's _CommentOverlay — the current frame's
+        # saved strokes shown over the video, without opening the full
+        # CommentEditor (2026-08-21, per the user's own request; see
+        # _on_show_comment_toggle/_refresh_frame_strokes below).
         self.show_comment_toggle_button: QPushButton = find(QPushButton, "pushButton_show_comment_toggle")
         # Generic busy indicator, added 2026-08-21 — shown/hidden around
         # every long-running operation this page runs (sequence extraction,
@@ -281,11 +288,19 @@ class UkoreShotPage(QWidget):
         PlayerWidget._set_button_icon(self.next_frame_button, _ICONS_DIR / "icons8-right-26.png", ">")
         PlayerWidget._set_button_icon(self.prev_comment_button, _ICONS_DIR / "prev_comment.png", "< Comment")
         PlayerWidget._set_button_icon(self.next_comment_button, _ICONS_DIR / "next_comment.png", "Comment >")
+        PlayerWidget._set_button_icon(self.show_comment_toggle_button, _ICONS_DIR / "comment_mode.png", "Comments")
         self.prev_frame_button.clicked.connect(lambda: self.player_widget.step_frame(-1))
         self.play_button.clicked.connect(self.player_widget.toggle_play)
         self.next_frame_button.clicked.connect(lambda: self.player_widget.step_frame(1))
         self.prev_comment_button.clicked.connect(self._on_prev_comment_clicked)
         self.next_comment_button.clicked.connect(self._on_next_comment_clicked)
+        # Toggles _CommentOverlay (player_widget.py) — off by default, shows
+        # the current frame's saved strokes over the video without needing
+        # to open the full CommentEditor. setCheckable so Qt's own
+        # pressed/checked style indicates state with the one icon this
+        # button has (no separate on/off icon pair).
+        self.show_comment_toggle_button.setCheckable(True)
+        self.show_comment_toggle_button.toggled.connect(self._on_show_comment_toggle)
 
         # 0.25x-1.00x discrete steps — comboBox_speed replaces the old
         # continuous speed_slider for this page only (CommentEditor keeps
@@ -403,6 +418,27 @@ class UkoreShotPage(QWidget):
         # Kept in sync with the player, not just a write-only entry field —
         # same as comment_editor.py's own lineEdit_keyframe.
         self.keyframe_edit.setText(str(frame_index))
+        self._refresh_frame_strokes()
+
+    # -- show comment overlay (pushButton_show_comment_toggle) --------------
+
+    def _on_show_comment_toggle(self, checked: bool) -> None:
+        self._show_comments = checked
+        self.player_widget.set_comments_visible(checked)
+        self._refresh_frame_strokes()
+
+    def _refresh_frame_strokes(self) -> None:
+        """Feeds player_widget.py's _CommentOverlay whichever frame is
+        currently on screen, reading from self._current_entry_frames — a
+        cached copy of the selected entry's comments.json "frames" dict
+        (see _load_selected_entry), not a fresh disk read on every call, so
+        this stays cheap even called on every single frame tick during
+        playback."""
+        if not self._show_comments:
+            self.player_widget.set_frame_strokes([])
+            return
+        data = self._current_entry_frames.get(str(self._current_frame_index), {})
+        self.player_widget.set_frame_strokes([Stroke.from_dict(s) for s in data.get("strokes", [])])
 
     # -- busy status (widget_status_loading) ---------------------------------
 
@@ -626,6 +662,8 @@ class UkoreShotPage(QWidget):
         if entry is None:
             self.player_widget.clear_video()
             self.player_widget.set_comment_frames([])
+            self._current_entry_frames = {}
+            self._refresh_frame_strokes()
             return
         if entry.video_path is not None:
             self.player_widget.load_video(entry.video_path)
@@ -635,6 +673,11 @@ class UkoreShotPage(QWidget):
         # reads straight off comments.json, same as Previous/Next Comment,
         # so this never forces a sequence extraction just to show them.
         self.player_widget.set_comment_frames(self._selected_entry_keyframe_indices())
+        # Cached once per selection (not re-read on every frame tick) for
+        # _refresh_frame_strokes — see that method and pushButton_show_
+        # comment_toggle's _on_show_comment_toggle.
+        self._current_entry_frames = comment_store.load(entry.sequence_dir)["frames"]
+        self._refresh_frame_strokes()
 
     def _update_empty_state(self) -> None:
         # No dedicated empty-state widget in the new .ui (unlike the old
@@ -706,8 +749,25 @@ class UkoreShotPage(QWidget):
         self.search_edit.setEnabled(True)
         self._hide_status()
         _logger.info("pull by code succeeded: %s", stem)
+        # No confirmation dialog (per the user's own request) — clear the
+        # search box first (it still holds the share code, which wouldn't
+        # match the pulled entry's actual filename via the wildcard search,
+        # so leaving it in place would filter the new row straight back
+        # out), then explicitly select the pulled row once it's in the
+        # table. _reload_videos() always resets selection to its own "most
+        # recently modified" default, which usually *is* the just-pulled
+        # entry but isn't guaranteed to be, so this doesn't rely on that.
+        self.search_edit.clear()
         self._reload_videos()
-        QMessageBox.information(self, "Video Synced", "Pulled \"{}\" down from the cloud.".format(stem))
+        if self._video_root is not None:
+            self._select_row_by_key(str(self._video_root / stem))
+
+    def _select_row_by_key(self, key: str) -> None:
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, _COL_NAME)
+            if item is not None and item.data(Qt.UserRole) == key:
+                self.table.selectRow(row)
+                return
 
     def _on_pull_by_code_not_found(self) -> None:
         self._pull_worker = None

@@ -297,6 +297,12 @@ class CommentEditor(QDialog):
         PlayerWidget._set_button_icon(self.redo_button, _REDO_ICON_PATH, "Redo")
         PlayerWidget._set_button_icon(self.clear_button, _CLEAR_FRAME_ICON_PATH, "Clear")
         PlayerWidget._set_button_icon(self.edit_message_button, _EDIT_MESSAGE_ICON_PATH, "Edit")
+        # Icon + label together (2026-08-21, per the user's own request) —
+        # unlike every other icon button here, _set_button_icon's usual
+        # icon-only look (it blanks the text once an icon file exists)
+        # would leave this one reading as a bare icon; re-set the text back
+        # on afterward so "Edit" always shows alongside the icon.
+        self.edit_message_button.setText("Edit")
         self.prev_frame_button.clicked.connect(lambda: self.player_widget.step_frame(-1))
         self.play_button.clicked.connect(self.player_widget.toggle_play)
         self.next_frame_button.clicked.connect(lambda: self.player_widget.step_frame(1))

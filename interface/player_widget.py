@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ukoreshot_plugin.interface.draw_overlay import DrawOverlay
+from ukoreshot_plugin.interface.draw_overlay import DrawOverlay, Stroke, paint_stroke_points
 from ukoreshot_plugin.interface.sequence_player import SequencePlayer
 
 _logger = logging.getLogger("UkoreShot.Player")
@@ -138,6 +138,46 @@ class _FrameNumberOverlay(QWidget):
                     painter.drawText(x + dx, y + dy, self._text)
         painter.setPen(Qt.white)
         painter.drawText(x, y, self._text)
+        painter.end()
+
+
+class _CommentOverlay(QWidget):
+    """Read-only rendering of the current frame's saved strokes on top of
+    the video surface — the plain viewer's (show_edit_tools=False)
+    counterpart to DrawOverlay's live drawing canvas, added 2026-08-21 so
+    UkoreShotPage's pushButton_show_comment_toggle can show what was drawn
+    on a frame without opening the full CommentEditor. Reuses
+    draw_overlay.py's own paint_stroke_points — the same normalized
+    0-1-widget-space stroke math DrawOverlay/Get Video - Commented already
+    use, just rendered here with none of DrawOverlay's mouse handling.
+    WA_TransparentForMouseEvents, same as _FrameNumberOverlay — purely
+    visual, never intercepts a click meant for the video surface beneath
+    it. Only ever constructed for show_edit_tools=False (see PlayerWidget
+    below) — edit mode already shows live strokes via DrawOverlay.load_frame,
+    so it would just be a redundant second copy there."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._strokes: list[Stroke] = []
+        self._show_enabled = False
+
+    def set_strokes(self, strokes) -> None:
+        self._strokes = list(strokes)
+        self.update()
+
+    def set_show_enabled(self, enabled: bool) -> None:
+        self._show_enabled = enabled
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if not self._show_enabled or not self._strokes:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        for stroke in self._strokes:
+            paint_stroke_points(painter, stroke.points, QColor(stroke.color), stroke.width, self.width(), self.height())
         painter.end()
 
 
@@ -416,10 +456,17 @@ class PlayerWidget(QWidget):
 
         self.frame_number_overlay = _FrameNumberOverlay()
         # DrawOverlay revived 2026-08-20 for CommentEditor's edit-mode
-        # PlayerWidget (show_edit_tools=True) — a plain viewer (the default)
-        # gets no overlay at all, same two-layer _VideoStack shape as before.
+        # PlayerWidget (show_edit_tools=True). A plain viewer
+        # (show_edit_tools=False) gets _CommentOverlay instead — a
+        # read-only rendering of the current frame's saved strokes, added
+        # 2026-08-21 for UkoreShotPage's pushButton_show_comment_toggle —
+        # the two are mutually exclusive (only one is ever non-None), both
+        # fill the same _VideoStack "overlay" slot.
         self.draw_overlay = DrawOverlay() if show_edit_tools else None
-        video_stack_widget = _VideoStack(self.video_surface, self.frame_number_overlay, self.draw_overlay)
+        self.comment_overlay = None if show_edit_tools else _CommentOverlay()
+        video_stack_widget = _VideoStack(
+            self.video_surface, self.frame_number_overlay, self.draw_overlay or self.comment_overlay
+        )
 
         self.play_button = QPushButton()
         self._set_button_icon(self.play_button, _PLAY_ICON_PATH, "Play")
@@ -585,6 +632,8 @@ class PlayerWidget(QWidget):
         self.sequence_player.clear()
         if self.draw_overlay is not None:
             self.draw_overlay.clear_frame()
+        if self.comment_overlay is not None:
+            self.comment_overlay.set_strokes([])
         self.video_surface.clear_frame()
         self.frame_number_overlay.clear()
 
@@ -694,6 +743,21 @@ class PlayerWidget(QWidget):
         this is just a pass-through so callers don't need to reach into
         self.position_slider directly."""
         self.position_slider.set_marked_frames(frames)
+
+    def set_frame_strokes(self, strokes) -> None:
+        """Feeds _CommentOverlay (view mode only) the current frame's saved
+        strokes — video_library_page.py calls this on every frame change
+        so the overlay always shows whichever frame is on screen. No-op in
+        show_edit_tools mode (comment_overlay is None there; DrawOverlay
+        already shows live strokes via load_frame instead)."""
+        if self.comment_overlay is not None:
+            self.comment_overlay.set_strokes(strokes)
+
+    def set_comments_visible(self, visible: bool) -> None:
+        """pushButton_show_comment_toggle — shows/hides _CommentOverlay
+        without needing to re-supply set_frame_strokes' data each time."""
+        if self.comment_overlay is not None:
+            self.comment_overlay.set_show_enabled(visible)
 
     def _on_goto_frame_entered(self) -> None:
         self._jump_to_frame(self.goto_frame_spin.value())

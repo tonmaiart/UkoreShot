@@ -54,6 +54,18 @@ further detail):
   keyframe here too, same as `CommentEditor`'s own shortcut.
   `pushButton_sort_oldest` was removed from `UkoreShotPage.ui` 2026-08-21
   (name-ascending/newest-first are the only sort modes left).
+  `pushButton_show_comment_toggle` (icon `comment_mode.png`, checkable)
+  toggles `player_widget.py`'s new `_CommentOverlay` — a read-only
+  rendering of the current frame's saved strokes over the video, the plain
+  viewer's counterpart to `DrawOverlay`'s live drawing canvas, without
+  needing to open the full `CommentEditor` (2026-08-21). `UkoreShotPage`
+  caches the selected entry's whole `comments.json` "frames" dict once per
+  selection (`_current_entry_frames`) rather than re-reading it from disk
+  on every frame tick during playback. `pushButton_edit_message` in
+  `CommentEditor` shows its "Edit" label alongside its icon (every other
+  icon button here is icon-only) and now also works with no table row
+  selected — it falls back to adding a comment on whichever frame the
+  player is currently on.
   `player_widget.py`'s `PlayerWidget` plays either a real video file
   (`QMediaPlayer`) or an already-extracted image sequence
   (`sequence_player.py`'s `SequencePlayer`, frame-accurate, used by
@@ -151,6 +163,15 @@ Cloudflare R2 via `api.cloud_sync` (`core/share_sync.py`'s
 `{ShotCode}_v{version}_{4 hex chars}` code (`comment_store.generate_share_code`)
 and pushes a small pointer blob (`share_sync.push_pointer`) that makes the
 code resolvable. "Copy Share Code" copies that code as plain text.
+
+`ShareUploadWorker`/`PullByCodeWorker` push/pull up to
+`_MAX_CONCURRENT_TRANSFERS` (6) frame files at once via a
+`ThreadPoolExecutor`, not one file at a time sequentially (2026-08-21,
+speeding up sharing a shot with hundreds of frames) — boto3/botocore
+clients are thread-safe for concurrent calls, so this is a pure wall-clock
+win. Every file still gets attempted even if one fails; the first real
+(non-`ConflictError`) exception seen across the batch is what actually
+gets raised/reported.
 
 Pasting that same code into `lineEdit_search_bar` and pressing Enter on a
 *different* machine pulls the sequence + `comments.json` back down
