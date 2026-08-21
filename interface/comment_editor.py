@@ -216,7 +216,7 @@ class CommentEditor(QDialog):
             comments.append(
                 {
                     "id": _new_comment_id(),
-                    "author": comment_store.current_username(),
+                    "author": comment_store.current_username(self._api),
                     "text": text,
                     "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }

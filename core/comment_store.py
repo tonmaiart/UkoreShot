@@ -19,19 +19,9 @@ import logging
 import uuid
 from pathlib import Path
 
-# The app's own top-level core/ package (core/store.py), NOT this file's
-# sibling ukoreshot_plugin.core package — same name, different package,
-# resolved unambiguously since this is an absolute import (Python resolves
-# it from sys.path's repo root, not relative to this file's own location) —
-# see ../README.md's naming note.
-from core.store import LocalConfigStore
-
 _logger = logging.getLogger("UkoreShot.CommentStore")
 
 _FILENAME = "comments.json"
-# core/comment_store.py, four parents up is the UkoreHub app root (same
-# depth/pattern the pre-2026-08-20 sidecar version already used).
-_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 _DEFAULT_SHARE_STATE = {
     "is_shared": False,
@@ -47,15 +37,17 @@ def metadata_path(sequence_dir: Path) -> Path:
     return sequence_dir / _FILENAME
 
 
-def current_username() -> str:
-    """Best-effort commenter identity for the comment table/thread — the
-    cached GitHub username (LocalConfigStore, constructed straight off disk
-    the same way every Maya-side/deep-desktop module in this codebase does
-    without an `api` handle) if logged in, else the OS account name, so
-    commenting still works for a machine that's never done GitHub login."""
-    store = LocalConfigStore(_REPO_ROOT / "data" / "local_config.json")
-    if store.github_username:
-        return store.github_username
+def current_username(api) -> str:
+    """Best-effort commenter identity for the comment table — the cached
+    GitHub username (api.local_config.github_username, the documented
+    plugin_api-sanctioned shared instance, NOT a raw LocalConfigStore
+    constructed straight off disk — that convenience only exists for
+    Maya-side modules with no `api` handle at all, which this desktop-only
+    file always has via its caller) if logged in, else the OS account name,
+    so commenting still works for a machine that's never done GitHub
+    login."""
+    if api is not None and getattr(api.local_config, "github_username", None):
+        return api.local_config.github_username
     return getpass.getuser()
 
 

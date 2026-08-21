@@ -6,23 +6,22 @@ session working on data/path/persistence concerns doesn't need to open any
 of `interface/`'s widget code (and vice versa) — see the top-level
 `../README.md`'s "Structure" section for the full rule.
 
-**Naming note:** `video_path_store.py`'s `from core.exceptions import
-NotFoundError` and `comment_store.py`'s `from core.store import
-LocalConfigStore` always mean the app's own **top-level** `core/` package
-(`C:\Tonmai\UkoreHub\core\`), never this folder — both are grandfathered
-direct imports from before this plugin went through `plugin_api` (see
-`plugin-api.md`'s "never `from core.xxx import yyy` in a plugin file, write
-`from plugin_api import yyy` instead"). `share_sync.py` (new code, no such
-history) correctly goes through the sanctioned `from plugin_api import
-ConflictError` instead — Python resolves
-`from core...` as an absolute import from the repo root on `sys.path`,
-completely independent of where the importing file itself lives. The two
-packages share a name by coincidence, not relationship; don't assume a
-bare `core.something` import anywhere in this plugin means
-`ukoreshot_plugin.core`. (`comment_store.py` was briefly gone from this
-folder — moved to `cache/plugins/BananaSketch/core/` on 2026-08-08 along
-with the rest of the draw/comment editor — but came back here 2026-08-20
-when that editor was revived in-house; see `../interface/README.md`.)
+**Naming note:** this plugin no longer has any direct `from core.xxx import
+yyy` imports at all — `comment_store.py`'s old `from core.store import
+LocalConfigStore` (ported unmodified from pre-2026-08-08 git history) was
+found broken 2026-08-21 (`No module named 'core.store'` — that module no
+longer exists in the app's current `core/`, per `PluginLoader`'s own error
+log) and fixed to take `api` and use the documented `api.local_config`
+instead, the same fix direction `share_sync.py` (new code) already used for
+`ConflictError` via `plugin_api`. If a future change here is tempted to
+write `from core.xxx import yyy` again: don't — go through `plugin_api`
+(`plugin-api.md`'s own rule) or thread `api` through instead, exactly
+because the app's own `core/` layout isn't a stable contract this plugin
+can assume across app versions, as this incident showed. (`comment_store.py`
+was briefly gone from this folder entirely — moved to
+`cache/plugins/BananaSketch/core/` on 2026-08-08 along with the rest of the
+draw/comment editor — but came back here 2026-08-20 when that editor was
+revived in-house; see `../interface/README.md`.)
 
 ## Files
 
