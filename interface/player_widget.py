@@ -741,7 +741,22 @@ class PlayerWidget(QWidget):
         _selected_entry_keyframe_indices() whenever the selected library
         row changes. PlayerWidget itself has no comment-data awareness —
         this is just a pass-through so callers don't need to reach into
-        self.position_slider directly."""
+        self.position_slider directly.
+
+        frames is always a list of *frame* indices, but position_slider's
+        own range/value are in milliseconds while in video mode (see
+        _on_duration_changed/_on_position_changed) — sequence mode's is the
+        only one already frame-indexed. Fixed 2026-08-21: this used to
+        forward frames straight through unconverted, so in video mode
+        (the common case in UkoreShotPage — any entry with a local video
+        file not yet extracted to a sequence) every mark got plotted as if
+        it were N *milliseconds* into a clip that's thousands of
+        milliseconds long, clustering them all near the left edge.
+        CommentEditor never hit this since it only ever uses load_sequence,
+        never load_video."""
+        if self._mode == "video":
+            fps = self._fps()
+            frames = [round(f / fps * 1000) for f in frames]
         self.position_slider.set_marked_frames(frames)
 
     def set_frame_strokes(self, strokes) -> None:

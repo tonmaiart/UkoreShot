@@ -288,7 +288,6 @@ class UkoreShotPage(QWidget):
         PlayerWidget._set_button_icon(self.next_frame_button, _ICONS_DIR / "icons8-right-26.png", ">")
         PlayerWidget._set_button_icon(self.prev_comment_button, _ICONS_DIR / "prev_comment.png", "< Comment")
         PlayerWidget._set_button_icon(self.next_comment_button, _ICONS_DIR / "next_comment.png", "Comment >")
-        PlayerWidget._set_button_icon(self.show_comment_toggle_button, _ICONS_DIR / "comment_mode.png", "Comments")
         self.prev_frame_button.clicked.connect(lambda: self.player_widget.step_frame(-1))
         self.play_button.clicked.connect(self.player_widget.toggle_play)
         self.next_frame_button.clicked.connect(lambda: self.player_widget.step_frame(1))
@@ -297,10 +296,13 @@ class UkoreShotPage(QWidget):
         # Toggles _CommentOverlay (player_widget.py) — off by default, shows
         # the current frame's saved strokes over the video without needing
         # to open the full CommentEditor. setCheckable so Qt's own
-        # pressed/checked style indicates state with the one icon this
-        # button has (no separate on/off icon pair).
+        # pressed/checked style also indicates state; the icon itself swaps
+        # too (2026-08-21, per the user's own request) — comment_mode.png
+        # while showing comments, icons8-video-50.png (a plain video icon)
+        # while off — see _update_show_comment_icon.
         self.show_comment_toggle_button.setCheckable(True)
         self.show_comment_toggle_button.toggled.connect(self._on_show_comment_toggle)
+        self._update_show_comment_icon()
 
         # 0.25x-1.00x discrete steps — comboBox_speed replaces the old
         # continuous speed_slider for this page only (CommentEditor keeps
@@ -426,6 +428,11 @@ class UkoreShotPage(QWidget):
         self._show_comments = checked
         self.player_widget.set_comments_visible(checked)
         self._refresh_frame_strokes()
+        self._update_show_comment_icon()
+
+    def _update_show_comment_icon(self) -> None:
+        icon_path = _ICONS_DIR / ("comment_mode.png" if self._show_comments else "icons8-video-50.png")
+        PlayerWidget._set_button_icon(self.show_comment_toggle_button, icon_path, "Comments")
 
     def _refresh_frame_strokes(self) -> None:
         """Feeds player_widget.py's _CommentOverlay whichever frame is
@@ -955,7 +962,21 @@ class UkoreShotPage(QWidget):
             audio_format=audio_format,
         )
         self._reload_videos()
-        QMessageBox.information(self, "Marked as Share", "Shared. Code: {}".format(code))
+        # Single-button "Copy Code and Close" instead of a plain OK dialog
+        # (2026-08-21, per the user's own request) — the whole point of
+        # this dialog is handing the just-generated code to the artist, so
+        # the one button does both at once rather than needing a separate
+        # Copy Share Code click afterward. clickedButton() check (rather
+        # than always copying once exec() returns) so dismissing via
+        # Esc/the window's close button doesn't silently copy anyway.
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Information)
+        dialog.setWindowTitle("Marked as Share")
+        dialog.setText("Shared. Code: {}".format(code))
+        copy_close_button = dialog.addButton("Copy Code and Close", QMessageBox.AcceptRole)
+        dialog.exec()
+        if dialog.clickedButton() is copy_close_button:
+            QApplication.clipboard().setText(code)
 
     def _on_share_upload_failed(self, message: str, sequence_dir: Path, *, was_already_shared: bool) -> None:
         self._share_worker = None

@@ -271,7 +271,7 @@
                </font>
               </property>
               <property name="text">
-               <string>Mark as Share</string>
+               <string>เปิดแชร์</string>
               </property>
              </widget>
             </item>
@@ -412,7 +412,7 @@
           </widget>
          </item>
          <item row="1" column="0">
-          <layout class="QHBoxLayout" name="horizontalLayout_2">
+          <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="3,2">
            <item>
             <spacer name="horizontalSpacer_6">
              <property name="orientation">
