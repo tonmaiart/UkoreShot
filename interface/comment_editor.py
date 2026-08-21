@@ -22,12 +22,25 @@ round, distinct from Mark as Share's one-time full upload).
 
 **Table redesigned 2026-08-21** per the user's own request: row selection
 (clicking any row snaps the player to that frame, not just double-clicking
-the Comment cell — see _on_table_row_selected), Time column dropped,
-Author moved to the last column, and a frame with strokes but no text
-comment yet now still gets its own row (previously only frames with an
-actual comment appeared at all — see _refresh_table). Previous/Next
-Comment buttons (also Shift+A/Shift+D) jump between keyframes the same
-list drives."""
+the Comment cell — see _on_table_row_selected) and a frame with strokes
+but no text comment yet now still gets its own row (previously only
+frames with an actual comment appeared at all — see _refresh_table).
+Previous/Next Comment buttons (also Shift+A/Shift+D) jump between
+keyframes the same list drives.
+
+**Rewired onto CommentEditor.ui's own controls, 2026-08-21**: the .ui
+already lays out pushButton_previous_frame/play/next_frame right beside
+its own Previous/Next Comment buttons, and pushButton_undo/redo/
+clear_frame as its own toolbar row — previously all dead/unused, since
+this file built its own duplicate PlayerWidget-driven controls and
+covered the .ui's own gridLayout_4 with a second, uninstalled layout of
+its own (`QVBoxLayout(self.viewer_group)` on a QGroupBox that already had
+a layout from the .ui). Now embeds player_widget into the .ui's own empty
+verticalLayout_player placeholder instead, and wires the .ui's buttons
+directly to PlayerWidget/DrawOverlay (see player_widget.py's own
+show_edit_tools docstring note). The Author/username column is gone from
+the Keyframe Comment table; a new leading icon column shows a green dot
+on whichever row is the frame currently on screen."""
 
 from __future__ import annotations
 
@@ -38,13 +51,13 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QFile, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QGroupBox,
-    QHBoxLayout,
+    QHeaderView,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -61,7 +74,44 @@ from ukoreshot_plugin.interface.player_widget import PlayerWidget
 _logger = logging.getLogger("UkoreShot.CommentEditor")
 
 _UI_FILE = Path(__file__).resolve().parent / "CommentEditor.ui"
-_COL_FRAME, _COL_COMMENT, _COL_AUTHOR = range(3)
+_COL_ACTIVE, _COL_FRAME, _COL_COMMENT = range(3)
+_FRAME_COLUMN_WIDTH_FRACTION = 0.10
+_ACTIVE_COLUMN_WIDTH = 28
+
+# This plugin's own images/ folder — see player_widget.py's own _ICONS_DIR
+# note for why (not the shared data/icons/ every other plugin uses).
+_ICONS_DIR = Path(__file__).resolve().parents[1] / "images"
+_PREV_FRAME_ICON_PATH = _ICONS_DIR / "icons8-chevron-left-26.png"
+_NEXT_FRAME_ICON_PATH = _ICONS_DIR / "icons8-right-26.png"
+_PLAY_ICON_PATH = _ICONS_DIR / "icons8-play-50.png"
+_PAUSE_ICON_PATH = _ICONS_DIR / "icons8-pause-50.png"
+_PREV_COMMENT_ICON_PATH = _ICONS_DIR / "prev_comment.png"
+_NEXT_COMMENT_ICON_PATH = _ICONS_DIR / "next_comment.png"
+_UNDO_ICON_PATH = _ICONS_DIR / "undo.png"
+_REDO_ICON_PATH = _ICONS_DIR / "redo.png"
+_CLEAR_FRAME_ICON_PATH = _ICONS_DIR / "clear_frame.png"
+
+_active_frame_icon: QIcon | None = None
+
+
+def _active_frame_dot_icon() -> QIcon:
+    """A small filled green circle, drawn once and cached — marks whichever
+    Keyframe Comment row is the frame currently on screen. Drawn
+    programmatically rather than shipped as a PNG since it's just a solid
+    dot, no need for a new asset file."""
+    global _active_frame_icon
+    if _active_frame_icon is None:
+        size = 12
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#2ecc71"))
+        painter.drawEllipse(1, 1, size - 2, size - 2)
+        painter.end()
+        _active_frame_icon = QIcon(pixmap)
+    return _active_frame_icon
 
 
 class CommentEditor(QDialog):
@@ -69,6 +119,10 @@ class CommentEditor(QDialog):
         super().__init__(parent)
         _logger.info("CommentEditor.__init__ starting for %s", sequence_dir)
         self.setWindowTitle("Comment - {}".format(sequence_dir.name))
+        # A bare QDialog has no Maximize button by default — add it (and
+        # Minimize, its usual pair) so the window can actually be maximized,
+        # not just start that way.
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
         self.setWindowState(Qt.WindowMaximized)
 
         self._sequence_dir = sequence_dir
@@ -110,6 +164,15 @@ class CommentEditor(QDialog):
         # call here, rather than assuming a descriptive name that isn't
         # actually there.
         self.cancel_button: QPushButton = find(QPushButton, "pushButton_2")
+        self.prev_frame_button: QPushButton = find(QPushButton, "pushButton_previous_frame")
+        self.play_button: QPushButton = find(QPushButton, "pushButton_play")
+        self.next_frame_button: QPushButton = find(QPushButton, "pushButton_next_frame")
+        self.prev_comment_button: QPushButton = find(QPushButton, "pushButton_previous_comment")
+        self.next_comment_button: QPushButton = find(QPushButton, "pushButton_next_comment")
+        self.undo_button: QPushButton = find(QPushButton, "pushButton_undo")
+        self.redo_button: QPushButton = find(QPushButton, "pushButton_redo")
+        self.clear_button: QPushButton = find(QPushButton, "pushButton_clear_frame")
+        self.viewer_player_layout: QVBoxLayout = find(QVBoxLayout, "verticalLayout_player")
 
         for _name, _widget in [
             ("groupBox_playblast_viewer", self.viewer_group),
@@ -117,36 +180,56 @@ class CommentEditor(QDialog):
             ("tableWidget", self.table),
             ("pushButton_save_comment", self.save_button),
             ("pushButton_2", self.cancel_button),
+            ("pushButton_previous_frame", self.prev_frame_button),
+            ("pushButton_play", self.play_button),
+            ("pushButton_next_frame", self.next_frame_button),
+            ("pushButton_previous_comment", self.prev_comment_button),
+            ("pushButton_next_comment", self.next_comment_button),
+            ("pushButton_undo", self.undo_button),
+            ("pushButton_redo", self.redo_button),
+            ("pushButton_clear_frame", self.clear_button),
+            ("verticalLayout_player", self.viewer_player_layout),
         ]:
             if _widget is None:
                 _logger.error("CommentEditor.ui has no widget named %r — findChild returned None", _name)
 
+        # Embeds into the .ui's own empty verticalLayout_player placeholder
+        # inside groupBox_playblast_viewer — not a fresh QVBoxLayout on the
+        # groupbox itself, which already has its own gridLayout_4 (the
+        # transport/toolbar rows below) from the .ui.
         self.player_widget = PlayerWidget(show_edit_tools=True)
         self.player_widget.frameIndexChanged.connect(self._on_frame_index_changed)
         self.player_widget.draw_overlay.strokesChanged.connect(self._on_strokes_changed)
-        viewer_layout = QVBoxLayout(self.viewer_group)
-        viewer_layout.setContentsMargins(4, 16, 4, 4)
-        viewer_layout.addWidget(self.player_widget)
+        self.player_widget.playingChanged.connect(self._on_playing_changed)
+        if self.viewer_player_layout is not None:
+            self.viewer_player_layout.addWidget(self.player_widget)
 
-        # Previous/Next Comment — added 2026-08-21, code-built (no matching
-        # widgets in CommentEditor.ui yet) into the "Keyframe Comment"
-        # groupbox's own layout, right below the table.
-        self.prev_comment_button = QPushButton("< Previous")
-        self.next_comment_button = QPushButton("Next >")
+        # Transport + comment-nav + undo/redo/clear all come from
+        # CommentEditor.ui now (see the module docstring's 2026-08-21 note)
+        # instead of PlayerWidget building duplicate widgets in code.
+        PlayerWidget._set_button_icon(self.prev_frame_button, _PREV_FRAME_ICON_PATH, "<")
+        PlayerWidget._set_button_icon(self.play_button, _PLAY_ICON_PATH, "Play")
+        PlayerWidget._set_button_icon(self.next_frame_button, _NEXT_FRAME_ICON_PATH, ">")
+        PlayerWidget._set_button_icon(self.prev_comment_button, _PREV_COMMENT_ICON_PATH, "< Comment")
+        PlayerWidget._set_button_icon(self.next_comment_button, _NEXT_COMMENT_ICON_PATH, "Comment >")
+        PlayerWidget._set_button_icon(self.undo_button, _UNDO_ICON_PATH, "Undo")
+        PlayerWidget._set_button_icon(self.redo_button, _REDO_ICON_PATH, "Redo")
+        PlayerWidget._set_button_icon(self.clear_button, _CLEAR_FRAME_ICON_PATH, "Clear")
+        self.prev_frame_button.clicked.connect(lambda: self.player_widget.step_frame(-1))
+        self.play_button.clicked.connect(self.player_widget.toggle_play)
+        self.next_frame_button.clicked.connect(lambda: self.player_widget.step_frame(1))
         self.prev_comment_button.clicked.connect(self._on_prev_comment_clicked)
         self.next_comment_button.clicked.connect(self._on_next_comment_clicked)
-        nav_row = QHBoxLayout()
-        nav_row.addWidget(self.prev_comment_button)
-        nav_row.addWidget(self.next_comment_button)
-        if self.comment_group is not None and self.comment_group.layout() is not None:
-            self.comment_group.layout().addLayout(nav_row, 1, 0)
+        self.undo_button.clicked.connect(self.player_widget.draw_overlay.undo)
+        self.redo_button.clicked.connect(self.player_widget.draw_overlay.redo)
+        self.clear_button.clicked.connect(self.player_widget.draw_overlay.clear_frame)
         self._prev_comment_shortcut = QShortcut(QKeySequence("Shift+A"), self)
         self._prev_comment_shortcut.activated.connect(self._on_prev_comment_clicked)
         self._next_comment_shortcut = QShortcut(QKeySequence("Shift+D"), self)
         self._next_comment_shortcut.activated.connect(self._on_next_comment_clicked)
 
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Frame", "Comment", "Author"])
+        self.table.setHorizontalHeaderLabels(["", "Frame", "Comment"])
         self.table.setEditTriggers(QTableWidget.DoubleClicked)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -156,12 +239,30 @@ class CommentEditor(QDialog):
         self.table.itemSelectionChanged.connect(self._on_table_row_selected)
         self._suppress_item_changed = False
 
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(_COL_ACTIVE, QHeaderView.Fixed)
+        header.setSectionResizeMode(_COL_FRAME, QHeaderView.Fixed)
+        header.setSectionResizeMode(_COL_COMMENT, QHeaderView.Stretch)
+        self.table.setColumnWidth(_COL_ACTIVE, _ACTIVE_COLUMN_WIDTH)
+        self._apply_frame_column_width()
+
         self.save_button.clicked.connect(self._on_save_clicked)
         self.cancel_button.clicked.connect(self.reject)
 
         self.player_widget.load_sequence(sequence_dir)
         self._refresh_table()
         _logger.info("CommentEditor.__init__ finished (%d frame(s) with saved data)", len(self._frames))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_frame_column_width()
+
+    def _apply_frame_column_width(self) -> None:
+        width = self.table.viewport().width()
+        self.table.setColumnWidth(_COL_FRAME, max(32, int(width * _FRAME_COLUMN_WIDTH_FRACTION)))
+
+    def _on_playing_changed(self, playing: bool) -> None:
+        PlayerWidget._set_button_icon(self.play_button, _PAUSE_ICON_PATH if playing else _PLAY_ICON_PATH, "Pause" if playing else "Play")
 
     # -- frame navigation / drawing persistence (in-memory only) -----------
 
@@ -257,6 +358,12 @@ class CommentEditor(QDialog):
         self._suppress_selection_jump = False
 
     def _set_row(self, row: int, frame_index: int, comment: dict | None) -> None:
+        active_item = QTableWidgetItem()
+        active_item.setFlags(active_item.flags() & ~Qt.ItemIsEditable)
+        if frame_index == self._current_frame_index:
+            active_item.setIcon(_active_frame_dot_icon())
+        self.table.setItem(row, _COL_ACTIVE, active_item)
+
         frame_item = QTableWidgetItem(str(frame_index))
         frame_item.setData(Qt.UserRole + 1, frame_index)
         frame_item.setFlags(frame_item.flags() & ~Qt.ItemIsEditable)
@@ -266,10 +373,6 @@ class CommentEditor(QDialog):
         comment_item.setData(Qt.UserRole, comment.get("id") if comment else None)
         comment_item.setData(Qt.UserRole + 1, frame_index)
         self.table.setItem(row, _COL_COMMENT, comment_item)
-
-        author_item = QTableWidgetItem(comment.get("author", "") if comment else "")
-        author_item.setFlags(author_item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(row, _COL_AUTHOR, author_item)
 
     def _on_table_row_selected(self) -> None:
         """Selecting any row (a single click anywhere in it, thanks to

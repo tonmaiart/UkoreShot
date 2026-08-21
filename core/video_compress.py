@@ -31,6 +31,23 @@ class VideoCompressionError(Exception):
     """Raised with a message that's already safe to show the user."""
 
 
+_FFMPEG_PATH_KEY = "ffmpeg_path"
+
+
+def get_ffmpeg_path(api) -> str | None:
+    """Per-machine (shared=False, gitignored) explicit ffmpeg override —
+    moved here from the now-deleted core/discord_client.py (this plugin no
+    longer talks to Discord at all). None/blank means "look up ffmpeg via
+    resolve_ffmpeg_path's cache-download/PATH fallback below"."""
+    store = api.plugin_config_store("ukore_shot", shared=False)
+    return store.get(_FFMPEG_PATH_KEY) or None
+
+
+def set_ffmpeg_path(api, ffmpeg_path: str | None) -> None:
+    store = api.plugin_config_store("ukore_shot", shared=False)
+    store.set(_FFMPEG_PATH_KEY, ffmpeg_path or None)
+
+
 def _cached_ffmpeg_path(cache_dir: Path) -> Path:
     return cache_dir / "ukore_shot" / "bin" / "ffmpeg.exe"
 

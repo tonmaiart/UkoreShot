@@ -157,6 +157,36 @@ def extract_audio(ffmpeg_path: str, video_path: Path, output_dir: Path) -> Path 
     return output_path
 
 
+def encode_sequence_to_video(
+    ffmpeg_path: str, frame_pattern: Path, fps: float, output_path: Path, *, audio_path: Path | None = None
+) -> None:
+    """The reverse direction of extract_sequence: encodes a numbered image
+    sequence (frame_pattern, e.g. ".../frame.%05d.png") into output_path.
+    Used by video_library_page.py's "Get Video - Commented" export, after
+    it composites each frame's saved strokes onto its own copy of the
+    image (Qt-based compositing stays in interface/ — this function itself
+    is a plain subprocess/ffmpeg wrapper, no Qt import, matching this
+    module's own no-PySide6-in-core/ rule). audio_path, if given and it
+    exists, is muxed in alongside (re-encoded to AAC, -shortest so the
+    output stops at whichever stream is shorter — frame count and audio
+    were extracted from the same source video, so they should already
+    agree)."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [ffmpeg_path, "-y", "-framerate", str(fps), "-i", str(frame_pattern)]
+    has_audio = audio_path is not None and audio_path.is_file()
+    if has_audio:
+        cmd += ["-i", str(audio_path)]
+    cmd += ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+    if has_audio:
+        cmd += ["-c:a", "aac", "-shortest"]
+    cmd += ["-movflags", "+faststart", str(output_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0 or not output_path.is_file():
+        raise VideoCompressionError(
+            "ffmpeg failed to encode {}: {}".format(output_path.name, result.stderr[-500:])
+        )
+
+
 def ensure_sequence(ffmpeg_path: str, video_path: Path, *, image_format: str = "png") -> Path:
     """The one function callers actually use — no-op if has_sequence() is
     already true (whether from a prior extraction or an old

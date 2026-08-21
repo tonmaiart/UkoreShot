@@ -4,6 +4,6 @@
   "version": "0.2.0",
   "api_version": 1,
   "entry_point": "plugin.py",
-  "description": "Per-repo video library of Maya playblasts with a built-in player, plus the configurable Maya playblast tool itself (maya-scripts/UkorePlayblast/, merged in 2026-08-20 — previously the separate ukore_playblast plugin). Frame-by-frame drawing/comment review opens in the separate BananaSketch plugin.",
+  "description": "Per-repo video library of Maya playblasts with a built-in player, plus the configurable Maya playblast tool itself (maya-scripts/UkorePlayblast/, merged in 2026-08-20 — previously the separate ukore_playblast plugin). Frame-by-frame drawing/comment review opens in this plugin's own in-house CommentEditor. Standalone — no Discord integration.",
   "requires": ["project_editor", "publish_api"]
 }

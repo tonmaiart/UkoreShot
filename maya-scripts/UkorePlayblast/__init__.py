@@ -13,8 +13,8 @@ try:
     registry.register_item(
         MenuItemSpec(
             id="playblast",
-            label="Playblast",
-            category="Anim",
+            label="Ukore Shot Playblast",
+            category="General",
             command="import UkorePlayblast; from UkorePlayblast import function; function.publish_playblast()",
             order=40,
         )

@@ -35,19 +35,12 @@ _DEFAULT_FPS = 24
 # cache/plugins/UkoreShot/interface/player_widget.py, one parent up is
 # cache/plugins/UkoreShot/ itself (this plugin's own images/ folder, not
 # the shared data/icons/ every other plugin uses — confirmed with the user
-# 2026-07-21 that UkoreShot's icons live locally in the plugin instead, see
-# images/README.md).
+# 2026-07-21 that UkoreShot's icons live locally in the plugin instead).
 _ICONS_DIR = Path(__file__).resolve().parents[1] / "images"
 _PREV_FRAME_ICON_PATH = _ICONS_DIR / "icons8-chevron-left-26.png"
 _NEXT_FRAME_ICON_PATH = _ICONS_DIR / "icons8-right-26.png"
 _PLAY_ICON_PATH = _ICONS_DIR / "icons8-play-50.png"
 _PAUSE_ICON_PATH = _ICONS_DIR / "icons8-pause-50.png"
-_EDIT_COMMENT_ICON_PATH = _ICONS_DIR / "icons8-edit-50.png"
-# Not added to images/ yet — _set_button_icon falls back to a "Discord" text
-# label until a real icon file is placed here, same as every other button's
-# pre-icon state (see images/README.md's own note on this fallback).
-_DISCORD_ICON_PATH = _ICONS_DIR / "icons8-discord-50.png"
-_EDIT_COMMENT_BUTTON_SIZE = 32
 
 
 class _VideoSurface(QWidget):
@@ -218,19 +211,20 @@ class PlayerWidget(QWidget):
     anyway"); sequence mode instead uses whatever fps was recorded at
     extraction time (`SequencePlayer.fps`).
 
-    `edit_comment_button` still just emits `editCommentRequested` — same
-    signal-out, host-page-does-the-work split `sendToDiscordRequested`
-    already uses, kept deliberately (this same widget is also embedded
-    inside `CommentEditor` itself, section 9, where an "Edit Comment"
-    button re-opening another editor from inside the editor wouldn't make
-    sense — `CommentEditor` hides its own embedded instance's button
-    instead of wiring the signal). `video_library_page.py`'s connection to
-    this signal changed 2026-08-20: it now calls `ensure_sequence` then
-    opens the in-house `CommentEditor` directly, replacing the old
-    hand-off to the separate `BananaSketch` plugin."""
+    **`show_edit_tools=True` also means "use `CommentEditor.ui`'s own
+    transport row"**: `CommentEditor.ui` already lays out its
+    own `pushButton_previous_frame`/`play`/`next_frame` (right beside its
+    own Previous/Next Comment buttons) and its own `pushButton_undo`/
+    `redo`/`clear_frame` — so this widget skips building/showing its own
+    competing copies of those six buttons in that mode. The underlying
+    handlers stay here (`step_frame`/`toggle_play` are public wrappers
+    `CommentEditor` connects its own buttons to; `draw_overlay.undo`/
+    `redo`/`clear_frame` are already public) and `playingChanged` lets the
+    host keep its own play button's icon in sync. `select_button`/
+    `color_button`/`size_slider` have no `.ui` equivalent and stay
+    code-built either way."""
 
-    editCommentRequested = Signal()
-    sendToDiscordRequested = Signal()
+    playingChanged = Signal(bool)
     frameIndexChanged = Signal(int)
 
     def __init__(self, parent=None, *, show_edit_tools: bool = False):
@@ -315,46 +309,21 @@ class PlayerWidget(QWidget):
         slider_row.addWidget(self.end_frame_label)
 
         transport_row = QHBoxLayout()
-        transport_row.addWidget(self.prev_frame_button)
-        transport_row.addWidget(self.play_button)
-        transport_row.addWidget(self.next_frame_button)
+        if not show_edit_tools:
+            # In show_edit_tools mode, CommentEditor.ui already lays out its
+            # own pushButton_previous_frame/play/next_frame right beside its
+            # own Previous/Next Comment buttons — see the class docstring.
+            # step_frame()/toggle_play() below are what CommentEditor wires
+            # those .ui buttons to instead.
+            transport_row.addWidget(self.prev_frame_button)
+            transport_row.addWidget(self.play_button)
+            transport_row.addWidget(self.next_frame_button)
         transport_row.addWidget(self.goto_frame_spin)
         transport_row.addWidget(self.fps_label)
         transport_row.addStretch()
         transport_row.addWidget(QLabel("Speed"))
         transport_row.addWidget(self.speed_slider)
         transport_row.addWidget(self.speed_label)
-
-        # edit_comment_button: a fixed 1:1 square icon button, emits
-        # editCommentRequested for video_library_page.py to open
-        # BananaSketch (UICommandService.navigate_and_focus) — used to open an
-        # in-app EditVideoDialog before that editor moved out to its own
-        # plugin 2026-08-08; the button's own meaning to an artist
-        # ("Edit") hasn't changed, only what it opens. send_discord_button:
-        # posts whichever video is loaded to the repo's configured Discord
-        # channel — video_library_page.py connects sendToDiscordRequested
-        # and owns the actual send (reading the channel/token, running
-        # DiscordSendWorker), same division of labor as
-        # edit_comment_button/editCommentRequested.
-        self.edit_comment_button = QPushButton()
-        self._set_button_icon(self.edit_comment_button, _EDIT_COMMENT_ICON_PATH, "Edit")
-        self.edit_comment_button.setFixedSize(_EDIT_COMMENT_BUTTON_SIZE, _EDIT_COMMENT_BUTTON_SIZE)
-        self.edit_comment_button.setEnabled(False)
-        self.edit_comment_button.clicked.connect(self.editCommentRequested.emit)
-        self.send_discord_button = QPushButton()
-        self._set_button_icon(self.send_discord_button, _DISCORD_ICON_PATH, "Discord")
-        self.send_discord_button.setToolTip("Send to Discord")
-        self.send_discord_button.setEnabled(False)
-        self.send_discord_button.clicked.connect(self.sendToDiscordRequested.emit)
-        transport_row.addWidget(self.edit_comment_button)
-        transport_row.addWidget(self.send_discord_button)
-        if show_edit_tools:
-            # Neither button means anything from inside the editor itself —
-            # re-opening CommentEditor from within CommentEditor, or
-            # sending a bare sequence-only PlayerWidget to Discord, are both
-            # nonsensical here (see the class docstring).
-            self.edit_comment_button.setVisible(False)
-            self.send_discord_button.setVisible(False)
 
         # -- edit toolbar (show_edit_tools only) -----------------------------
         # Revived 2026-08-20 from the pre-2026-08-08 show_edit_tools=True
@@ -364,7 +333,9 @@ class PlayerWidget(QWidget):
         # always erases (see DrawOverlay.mousePressEvent) — and the Text
         # tool is gone entirely. Only Select remains as an explicit toggle
         # (a genuinely different interaction, not just a different mouse
-        # button), plus a color swatch, a size slider, undo/redo, and Clear.
+        # button), plus a color swatch and a size slider — undo/redo/Clear
+        # moved to CommentEditor.ui's own pushButton_undo/redo/clear_frame
+        # (see the class docstring), wired straight to draw_overlay there.
         toolbar_row = None
         if show_edit_tools:
             self.select_button = QToolButton()
@@ -394,28 +365,25 @@ class PlayerWidget(QWidget):
             self.draw_overlay.set_color(self._current_color)
             self.draw_overlay.set_brush_width(_DEFAULT_TOOL_SIZE)
 
-            self.undo_button = QPushButton("Undo")
-            self.undo_button.clicked.connect(self.draw_overlay.undo)
-            self.redo_button = QPushButton("Redo")
-            self.redo_button.clicked.connect(self.draw_overlay.redo)
             # Ctrl+Z / Ctrl+Shift+Z, added 2026-08-21 per the user's own
-            # request — the toolbar buttons already called
-            # draw_overlay.undo()/redo(), this just adds the keyboard
-            # shortcuts most users reach for first. Ctrl+Shift+Z
-            # specifically (not QKeySequence.Redo, which is Ctrl+Y on
-            # Windows) since that's the exact binding asked for.
-            # _is_typing()-guarded the same way the frame-step/play
-            # shortcuts below already are, so redoing while editing a
+            # request. Ctrl+Shift+Z specifically (not QKeySequence.Redo,
+            # which is Ctrl+Y on Windows) since that's the exact binding
+            # asked for. _is_typing()-guarded the same way the frame-step/
+            # play shortcuts below already are, so redoing while editing a
             # keyframe comment table cell doesn't hijack that field's own
-            # native text-undo instead.
+            # native text-undo instead. Default Qt.WindowShortcut context
+            # (no explicit setContext) — fixed 2026-08-21 after a real "the
+            # shortcut doesn't work" report: WidgetWithChildrenShortcut only
+            # fires while a descendant of this widget literally holds
+            # keyboard focus, and DrawOverlay never grabs focus on a plain
+            # click, so after drawing a stroke there was nothing in this
+            # widget's subtree to activate against. WindowShortcut instead
+            # fires whenever this widget's top-level window (CommentEditor)
+            # is the active window, regardless of which child has focus.
             self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-            self._undo_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
             self._undo_shortcut.activated.connect(self._undo_if_not_typing)
             self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
-            self._redo_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
             self._redo_shortcut.activated.connect(self._redo_if_not_typing)
-            self.clear_button = QPushButton("Clear")
-            self.clear_button.clicked.connect(self.draw_overlay.clear_frame)
 
             toolbar_row = QHBoxLayout()
             toolbar_row.addWidget(self.select_button)
@@ -423,28 +391,22 @@ class PlayerWidget(QWidget):
             toolbar_row.addWidget(QLabel("Size (scroll to adjust)"))
             toolbar_row.addWidget(self.size_slider)
             toolbar_row.addStretch()
-            toolbar_row.addWidget(self.undo_button)
-            toolbar_row.addWidget(self.redo_button)
-            toolbar_row.addWidget(self.clear_button)
 
         # "A"/"D" step one frame back/forward, "Space" toggles play/pause —
         # skipped while a text field has focus (goto_frame_spin's internal
         # line edit) via _is_typing() so typing those letters/space
         # doesn't hijack the cursor instead. Comment-jump ("Shift+A"/
         # "Shift+D") lives in comment_editor.py instead (this widget has no
-        # keyframe table to jump between). Ctrl+Z/Ctrl+Shift+Z undo/redo are
-        # back (added 2026-08-21, see the show_edit_tools block above) now
-        # that draw_overlay.py is too — only the old "1"-"4" tool-switch
-        # shortcuts are still gone, since brush/eraser/text are no longer
-        # separate selectable tools at all (see DrawOverlay's own docstring).
+        # keyframe table to jump between). Default Qt.WindowShortcut context
+        # (see the undo/redo shortcuts' own note above) — only the old
+        # "1"-"4" tool-switch shortcuts are still gone, since brush/eraser/
+        # text are no longer separate selectable tools at all (see
+        # DrawOverlay's own docstring).
         self._prev_frame_shortcut = QShortcut(QKeySequence(Qt.Key_A), self)
-        self._prev_frame_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self._prev_frame_shortcut.activated.connect(lambda: self._step_frame_if_not_typing(-1))
         self._next_frame_shortcut = QShortcut(QKeySequence(Qt.Key_D), self)
-        self._next_frame_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self._next_frame_shortcut.activated.connect(lambda: self._step_frame_if_not_typing(1))
         self._play_pause_shortcut = QShortcut(QKeySequence(Qt.Key_Space), self)
-        self._play_pause_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self._play_pause_shortcut.activated.connect(self._toggle_play_if_not_typing)
 
         layout = QVBoxLayout(self)
@@ -476,14 +438,10 @@ class PlayerWidget(QWidget):
         self._video_path = video_path
         self.player.setSource(QUrl.fromLocalFile(str(video_path)))
         self.player.pause()
-        self.edit_comment_button.setEnabled(True)
-        self.send_discord_button.setEnabled(True)
 
     def load_sequence(self, sequence_dir: Path) -> None:
         """Alternate entry point driving SequencePlayer instead of
-        QMediaPlayer — see the class docstring for when each is used.
-        send_discord_button stays disabled: a sequence-only entry (no local
-        video file) has nothing to send to Discord."""
+        QMediaPlayer — see the class docstring for when each is used."""
         _logger.debug("load_sequence(%s)", sequence_dir)
         self._mode = "sequence"
         self._video_path = None
@@ -496,8 +454,6 @@ class PlayerWidget(QWidget):
         self.position_slider.setRange(0, max(0, frame_count - 1))
         self.end_frame_label.setText(str(max(0, frame_count - 1)))
         self.goto_frame_spin.setRange(0, max(0, frame_count - 1))
-        self.edit_comment_button.setEnabled(True)
-        self.send_discord_button.setEnabled(False)
 
     def clear_video(self) -> None:
         self._mode = None
@@ -509,8 +465,6 @@ class PlayerWidget(QWidget):
             self.draw_overlay.clear_frame()
         self.video_surface.clear_frame()
         self.frame_number_overlay.clear()
-        self.edit_comment_button.setEnabled(False)
-        self.send_discord_button.setEnabled(False)
 
     def _on_video_frame(self, frame) -> None:
         if not frame.isValid():
@@ -534,6 +488,17 @@ class PlayerWidget(QWidget):
 
     # -- transport --------------------------------------------------------
 
+    def step_frame(self, delta: int) -> None:
+        """Public wrapper around _step_frame — CommentEditor's own
+        pushButton_previous_frame/next_frame (see class docstring) call
+        this instead of PlayerWidget building its own duplicate buttons."""
+        self._step_frame(delta)
+
+    def toggle_play(self) -> None:
+        """Public wrapper around _on_play_clicked — CommentEditor's own
+        pushButton_play calls this instead."""
+        self._on_play_clicked()
+
     def _fps(self):
         return self.sequence_player.fps if self._mode == "sequence" else self._fps_value
 
@@ -553,6 +518,7 @@ class PlayerWidget(QWidget):
 
     def _set_paused_state(self, paused: bool) -> None:
         self._set_button_icon(self.play_button, _PLAY_ICON_PATH if paused else _PAUSE_ICON_PATH, "Play" if paused else "Pause")
+        self.playingChanged.emit(not paused)
 
     def _on_duration_changed(self, duration_ms: int) -> None:
         if self._mode != "video":

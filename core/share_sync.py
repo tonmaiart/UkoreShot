@@ -83,10 +83,10 @@ def pull_pointer(cloud_sync, code: str) -> dict | None:
 class ShareUploadWorker(QThread):
     """One-shot upload of an already-extracted sequence + its comments.json
     to R2, then the pointer blob that makes the resulting code resolvable.
-    Same one-shot-QThread shape as discord_send_worker.py's
-    DiscordSendWorker. Doesn't generate/persist the share code itself —
-    the caller (video_library_page.py's _on_mark_as_share_clicked) does that
-    only after `succeeded` fires, then calls push_pointer separately once it
+    Same one-shot-QThread shape as CommentSyncWorker/PullByCodeWorker below.
+    Doesn't generate/persist the share code itself — the caller
+    (video_library_page.py's _on_mark_as_share_clicked) does that only
+    after `succeeded` fires, then calls push_pointer separately once it
     knows the code."""
 
     succeeded = Signal()

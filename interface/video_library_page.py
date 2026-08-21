@@ -4,16 +4,20 @@ import datetime
 import fnmatch
 import logging
 import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QSize, Qt
-from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QGroupBox,
+    QHeaderView,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -23,16 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# open_in_file_explorer: the documented plugin_api re-export of
-# core/os_utils.py's helper (see developer/app/docs/plugin-api.md's "Misc
-# helpers" row under "Re-exported core/ types") — the sanctioned way to
-# reach it from a plugin, not a direct `core.os_utils` import.
-from plugin_api import open_in_file_explorer
-from ukoreshot_plugin.core import comment_store, discord_client, video_naming, video_path_store, video_sequence
-from ukoreshot_plugin.core.video_compress import VideoCompressionError, compress_to_fit
+from ukoreshot_plugin.core import comment_store, video_naming, video_path_store, video_sequence
+from ukoreshot_plugin.core.video_compress import VideoCompressionError, compress_to_fit, get_ffmpeg_path
 from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, push_pointer
 from ukoreshot_plugin.interface.comment_editor import CommentEditor
-from ukoreshot_plugin.interface.discord_send_worker import DiscordSendWorker
+from ukoreshot_plugin.interface.draw_overlay import paint_stroke_points
 from ukoreshot_plugin.interface.player_widget import PlayerWidget
 from ukoreshot_plugin.interface.thumbnail_loader import ThumbnailLoader
 
@@ -40,7 +39,10 @@ _logger = logging.getLogger("UkoreShot.Library")
 
 _UI_FILE = Path(__file__).resolve().parent / "UkoreShotPage.ui"
 _VIDEO_EXTENSIONS = {".mov", ".mp4", ".avi"}
-_ICON_SIZE = QSize(96, 60)
+_ICON_SIZE = QSize(160, 100)
+# Hard cap for Get Video / Get Video - Commented, per the user's own
+# request — independent of the (now-removed) Discord Max Upload Size.
+_MAX_EXPORT_BYTES = 20 * 1024 * 1024
 
 # This plugin's own images/ folder — see player_widget.py's own _ICONS_DIR
 # note for why (not the shared data/icons/ every other plugin uses).
@@ -91,6 +93,16 @@ def _format_time_ago(mtime: float) -> str:
     return "{}mo ago".format(int(delta_seconds // 2592000))
 
 
+def _reveal_and_select_in_explorer(path: Path) -> None:
+    """Opens Windows Explorer at path's containing folder with path itself
+    already selected/highlighted — /select, does both in one call, so
+    there's no separate "open the folder" step needed first. Windows-only,
+    matching this plugin's other Windows-only conventions (e.g. the ffmpeg
+    win64 auto-download). explorer.exe's own exit code is unreliable even
+    on success, so this doesn't check it."""
+    subprocess.run(["explorer", "/select,", str(path)])
+
+
 def _wildcard_match(pattern: str, text: str) -> bool:
     """Plain typing (no "*"/"?") behaves like the old substring search —
     wrapped as "*text*" first — while a real wildcard pattern is used as
@@ -119,11 +131,19 @@ class UkoreShotPage(QWidget):
     Video->image-sequence splitting is lazy (core/video_sequence.py),
     triggered only from pushButton_comment/pushButton_mark_as_share's own
     handlers — never from a reload/refresh scan, per the user's explicit
-    "don't convert every video just from browsing" instruction. The old
-    BananaSketch hand-off for Edit Comment is gone — pushButton_comment (via
-    PlayerWidget.editCommentRequested) now opens the in-house CommentEditor
-    directly (see comment_editor.py), reviving the draw/comment system that
-    was extracted out of this plugin on 2026-08-08."""
+    "don't convert every video just from browsing" instruction. Edit
+    Comment (pushButton_comment) opens the in-house CommentEditor directly
+    (see comment_editor.py) — PlayerWidget no longer has its own duplicate
+    Edit Comment button (removed 2026-08-21, this page's own button already
+    covers it).
+
+    Discord support removed entirely 2026-08-21 (standalone tool now) —
+    pushButton_get_video/pushButton_get_video_commented replace the old
+    Discord-oriented "get format video"/"auto send to Discord" buttons:
+    both just generate a local .mp4 (hard-capped at 20MB) into a
+    cache-only export folder that's never touched by cloud sync, and
+    reveal+select it in Explorer — see _on_get_video_clicked/
+    _on_get_video_commented_clicked below."""
 
     def __init__(self, parent=None, *, api):
         super().__init__(parent)
@@ -135,7 +155,6 @@ class UkoreShotPage(QWidget):
         self._entries_by_key: dict[str, _LibraryEntry] = {}
         self._selected_key: str | None = None
         self._sort_mode = _DEFAULT_SORT
-        self._discord_worker: DiscordSendWorker | None = None
         self._share_worker: ShareUploadWorker | None = None
         self._pull_worker: PullByCodeWorker | None = None
         self._thumbnail_loader = ThumbnailLoader(self)
@@ -166,8 +185,8 @@ class UkoreShotPage(QWidget):
         self.comment_button: QPushButton = find(QPushButton, "pushButton_comment")
         self.mark_as_share_button: QPushButton = find(QPushButton, "pushButton_mark_as_share")
         self.copy_clipboard_button: QPushButton = find(QPushButton, "pushButton_copy_clipboard")
-        self.get_format_video_button: QPushButton = find(QPushButton, "pushButton_get_format_video")
-        self.auto_send_discord_button: QPushButton = find(QPushButton, "pushButton_auto_send_to_discord")
+        self.get_video_button: QPushButton = find(QPushButton, "pushButton_get_video")
+        self.get_video_commented_button: QPushButton = find(QPushButton, "pushButton_get_video_commented")
 
         for _name, _widget in [
             ("groupBox_playblast_viewer", self.viewer_group),
@@ -180,8 +199,8 @@ class UkoreShotPage(QWidget):
             ("pushButton_comment", self.comment_button),
             ("pushButton_mark_as_share", self.mark_as_share_button),
             ("pushButton_copy_clipboard", self.copy_clipboard_button),
-            ("pushButton_get_format_video", self.get_format_video_button),
-            ("pushButton_auto_send_to_discord", self.auto_send_discord_button),
+            ("pushButton_get_video", self.get_video_button),
+            ("pushButton_get_video_commented", self.get_video_commented_button),
         ]:
             if _widget is None:
                 _logger.error("UkoreShotPage.ui has no widget named %r — findChild returned None", _name)
@@ -191,8 +210,6 @@ class UkoreShotPage(QWidget):
         # QGroupBox at runtime" convention groupBox_playblast_viewer in
         # comment_editor.py's CommentEditor.ui also uses.
         self.player_widget = PlayerWidget()
-        self.player_widget.editCommentRequested.connect(self._on_edit_comment_clicked)
-        self.player_widget.sendToDiscordRequested.connect(self._on_send_discord_clicked)
         viewer_layout = QVBoxLayout(self.viewer_group)
         viewer_layout.setContentsMargins(4, 16, 4, 4)
         viewer_layout.addWidget(self.player_widget)
@@ -204,6 +221,14 @@ class UkoreShotPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
+        self.table.verticalHeader().setDefaultSectionSize(_ICON_SIZE.height() + 12)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(_COL_THUMBNAIL, QHeaderView.Fixed)
+        self.table.setColumnWidth(_COL_THUMBNAIL, _ICON_SIZE.width() + 8)
+        header.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
+        header.setSectionResizeMode(_COL_SHARED, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(_COL_DATE, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(_COL_TIME_AGO, QHeaderView.ResizeToContents)
 
         self.search_edit.textChanged.connect(self._apply_filter)
         self.search_edit.returnPressed.connect(self._on_search_enter)
@@ -214,8 +239,8 @@ class UkoreShotPage(QWidget):
         self.comment_button.clicked.connect(self._on_edit_comment_clicked)
         self.mark_as_share_button.clicked.connect(self._on_mark_as_share_clicked)
         self.copy_clipboard_button.clicked.connect(self._on_copy_clipboard_clicked)
-        self.get_format_video_button.clicked.connect(self._on_get_format_video_clicked)
-        self.auto_send_discord_button.clicked.connect(self._on_send_discord_clicked)
+        self.get_video_button.clicked.connect(self._on_get_video_clicked)
+        self.get_video_commented_button.clicked.connect(self._on_get_video_commented_clicked)
         self.copy_clipboard_button.setEnabled(False)
 
         self._update_button_states()
@@ -233,7 +258,7 @@ class UkoreShotPage(QWidget):
 
     def _resolve_ffmpeg(self) -> str | None:
         try:
-            path = video_sequence.resolve_ffmpeg_path(discord_client.get_ffmpeg_path(self._api), self._api.cache_dir)
+            path = video_sequence.resolve_ffmpeg_path(get_ffmpeg_path(self._api), self._api.cache_dir)
             _logger.debug("resolved ffmpeg path: %s", path)
             return path
         except VideoCompressionError as exc:
@@ -413,7 +438,11 @@ class UkoreShotPage(QWidget):
         has_selection = entry is not None
         self.comment_button.setEnabled(has_selection)
         self.mark_as_share_button.setEnabled(has_selection)
-        self.get_format_video_button.setEnabled(has_selection and entry.video_path is not None)
+        # Get Video needs a real source file to compress from; Get Video -
+        # Commented works off the sequence instead, which every selectable
+        # entry has (or can lazily extract) regardless of a local video file.
+        self.get_video_button.setEnabled(has_selection and entry.video_path is not None)
+        self.get_video_commented_button.setEnabled(has_selection)
         is_shared = has_selection and entry.share_state["is_shared"]
         self.copy_clipboard_button.setEnabled(bool(is_shared and entry.share_state.get("code")))
 
@@ -626,93 +655,109 @@ class UkoreShotPage(QWidget):
         if code:
             QApplication.clipboard().setText(code)
 
-    # -- discord ---------------------------------------------------------------
+    # -- get video / get video - commented -----------------------------------
 
-    def _on_get_format_video_clicked(self) -> None:
-        """Compresses the selected video down to the repo's configured
-        Discord Max Upload Size via ffmpeg and reveals it in the OS file
-        explorer — a manual preview/export step, distinct from Auto Send to
-        Discord Post below (which posts it automatically)."""
+    def _on_get_video_clicked(self) -> None:
+        """Compresses the selected video's own source file down to
+        _MAX_EXPORT_BYTES via ffmpeg (a no-op transcode if it's already
+        under that) and copies the result into this repo's export folder,
+        overwriting whatever was there before — regenerated fresh on every
+        click, never reused, and never touched by any cloud-sync code path
+        in this plugin (see video_path_store.resolve_export_dir)."""
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None or entry.video_path is None or self._project_id is None or self._repo_id is None:
             return
         ffmpeg_path = self._resolve_ffmpeg()
         if ffmpeg_path is None:
             return
-        max_upload_bytes = discord_client.get_max_upload_mb(self._api, self._project_id, self._repo_id) * 1024 * 1024
+        export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
+        output_path = export_dir / "{}.mp4".format(entry.stem)
         try:
-            output_path = compress_to_fit(ffmpeg_path, entry.video_path, max_upload_bytes)
+            result_path = compress_to_fit(ffmpeg_path, entry.video_path, _MAX_EXPORT_BYTES)
         except VideoCompressionError as exc:
-            _logger.warning("Get Format Video failed for %s: %s", entry.video_path, exc)
-            QMessageBox.warning(self, "Get Format Video Failed", str(exc))
+            _logger.warning("Get Video failed for %s: %s", entry.video_path, exc)
+            QMessageBox.warning(self, "Get Video Failed", str(exc))
             return
-        _logger.info("Get Format Video: revealing %s", output_path)
-        open_in_file_explorer(output_path)
+        shutil.copy2(result_path, output_path)
+        if result_path != entry.video_path:
+            shutil.rmtree(result_path.parent, ignore_errors=True)
+        _logger.info("Get Video: wrote %s", output_path)
+        _reveal_and_select_in_explorer(output_path)
 
-    def _on_send_discord_clicked(self) -> None:
+    def _on_get_video_commented_clicked(self) -> None:
+        """Same 20MB-capped local export as Get Video above, but composites
+        each frame's saved drawing (core/comment_store.py's per-frame
+        "strokes") onto the frame first — works for a sequence-only entry
+        too (no local video file needed), unlike Get Video."""
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
-        if entry is None or entry.video_path is None or self._project_id is None or self._repo_id is None:
+        if entry is None or self._project_id is None or self._repo_id is None:
             return
-        video_path = entry.video_path
-        if not entry.parsed:
-            QMessageBox.warning(
-                self,
-                "Send to Discord",
-                "This video's filename doesn't match the playblast naming convention, so its shot code can't be "
-                "determined — Send to Discord needs one to find or create the matching forum post.",
-            )
+        sequence_dir = self._ensure_sequence_for(entry)
+        if sequence_dir is None:
             return
-        shot_title = entry.parsed["shot_code"]
+        ffmpeg_path = self._resolve_ffmpeg()
+        if ffmpeg_path is None:
+            return
+        export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
+        output_path = export_dir / "{}_commented.mp4".format(entry.stem)
+        try:
+            self._render_commented_video(ffmpeg_path, sequence_dir, output_path)
+        except VideoCompressionError as exc:
+            _logger.warning("Get Video - Commented failed for %s: %s", sequence_dir, exc)
+            QMessageBox.warning(self, "Get Video - Commented Failed", str(exc))
+            return
+        _logger.info("Get Video - Commented: wrote %s", output_path)
+        _reveal_and_select_in_explorer(output_path)
 
-        channel_id = discord_client.get_channel_id(self._api, self._project_id, self._repo_id)
-        if not channel_id:
-            QMessageBox.warning(
-                self,
-                "Discord Not Configured",
-                "No Discord forum channel is set for this repo — set one under Repository Setting > UkoreShot first.",
-            )
-            return
-        token = discord_client.get_bot_token(self._api, self._project_id, self._repo_id)
-        if not token:
-            QMessageBox.warning(
-                self,
-                "Discord Not Configured",
-                "No Discord bot token is set for this repo — set one under Repository Setting > UkoreShot first.",
-            )
-            return
-
-        max_upload_bytes = discord_client.get_max_upload_mb(self._api, self._project_id, self._repo_id) * 1024 * 1024
-        ffmpeg_path = discord_client.get_ffmpeg_path(self._api)
-
-        _logger.info("Send to Discord: sending %s (shot=%s)", video_path, shot_title)
-        self.auto_send_discord_button.setEnabled(False)
-        self.player_widget.send_discord_button.setEnabled(False)
-        self._discord_worker = DiscordSendWorker(
-            token,
-            channel_id,
-            shot_title,
-            video_path,
-            video_path.name,
-            max_upload_bytes=max_upload_bytes,
-            ffmpeg_path=ffmpeg_path,
-            cache_dir=self._api.cache_dir,
-            parent=self,
+    def _render_commented_video(self, ffmpeg_path: str, sequence_dir: Path, output_path: Path) -> None:
+        frame_paths = sorted(
+            p for p in sequence_dir.iterdir() if p.is_file() and p.suffix.lower() in {".png", ".jpg", ".jpeg"}
         )
-        self._discord_worker.succeeded.connect(self._on_discord_send_succeeded)
-        self._discord_worker.failed.connect(self._on_discord_send_failed)
-        self._discord_worker.finished.connect(self._discord_worker.deleteLater)
-        self._discord_worker.start()
+        if not frame_paths:
+            raise VideoCompressionError("No extracted frames found for {} — nothing to render.".format(sequence_dir.name))
+        data = comment_store.load(sequence_dir)
+        frames_meta = data["frames"]
+        fps = data["share"].get("fps") or 24.0
 
-    def _on_discord_send_succeeded(self) -> None:
-        self._discord_worker = None
-        self.auto_send_discord_button.setEnabled(True)
-        self.player_widget.send_discord_button.setEnabled(True)
-        _logger.info("Send to Discord succeeded")
-        QMessageBox.information(self, "Sent to Discord", "Video posted to Discord.")
+        render_dir = Path(tempfile.mkdtemp(prefix="ukorehub_commented_"))
+        try:
+            # comment_store.json keys strokes by the same 0-based sorted
+            # position sequence_player.py uses as its own frame_index — see
+            # that file's frame_paths[current_frame_index] lookup.
+            for index, frame_path in enumerate(frame_paths):
+                image = QImage(str(frame_path))
+                strokes = frames_meta.get(str(index), {}).get("strokes", [])
+                if strokes:
+                    painter = QPainter(image)
+                    painter.setRenderHint(QPainter.Antialiasing)
+                    for stroke in strokes:
+                        paint_stroke_points(
+                            painter,
+                            [tuple(p) for p in stroke.get("points", [])],
+                            QColor(stroke.get("color", "#ff3b30")),
+                            int(stroke.get("width", 4)),
+                            image.width(),
+                            image.height(),
+                        )
+                    painter.end()
+                image.save(str(render_dir / "frame.{:05d}.png".format(index + 1)))
 
-    def _on_discord_send_failed(self, message: str) -> None:
-        self._discord_worker = None
-        self.auto_send_discord_button.setEnabled(True)
-        self.player_widget.send_discord_button.setEnabled(True)
-        _logger.warning("Send to Discord failed: %s", message)
-        QMessageBox.warning(self, "Discord Send Failed", message)
+            audio_path = video_sequence.audio_path_for(sequence_dir, sequence_dir.name)
+            temp_output = render_dir / "rendered.mp4"
+            video_sequence.encode_sequence_to_video(
+                ffmpeg_path,
+                render_dir / "frame.%05d.png",
+                fps,
+                temp_output,
+                audio_path=audio_path if audio_path.is_file() else None,
+            )
+            final_path = compress_to_fit(ffmpeg_path, temp_output, _MAX_EXPORT_BYTES)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(final_path, output_path)
+            if final_path != temp_output:
+                # compress_to_fit produced a second, separate temp dir of
+                # its own (temp_output was already over _MAX_EXPORT_BYTES) —
+                # clean that up too, not just render_dir below.
+                shutil.rmtree(final_path.parent, ignore_errors=True)
+        finally:
+            shutil.rmtree(render_dir, ignore_errors=True)

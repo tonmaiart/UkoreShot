@@ -167,6 +167,49 @@ def _finalize_single_frame_image(export_file_path: str, image_format: str) -> st
     return target_path
 
 
+def _resolve_camera_shape(panel):
+    """Camera shape node currently assigned to `panel`, or None — used to
+    toggle displayFilmGate off for the exact camera a playblast will
+    actually capture through. Best-effort: any failure here just means the
+    Film Gate auto-disable below no-ops, never blocks the playblast
+    itself."""
+    if not panel or cmds.getPanel(typeOf=panel) != "modelPanel":
+        return None
+    cam = cmds.modelPanel(panel, query=True, camera=True)
+    if not cam or not cmds.objExists(cam):
+        return None
+    shapes = cmds.listRelatives(cam, shapes=True, fullPath=True) or []
+    return shapes[0] if shapes else cam
+
+
+def _disable_film_gate(camera_shape):
+    """Turns displayFilmGate off for camera_shape if it's currently on,
+    returning camera_shape (so the caller knows to restore it afterward)
+    or None if there was nothing to restore. Swallows any Maya API error —
+    a camera without the attribute, or any other resolution hiccup, just
+    means Film Gate is left exactly as it was."""
+    if not camera_shape:
+        return None
+    try:
+        if not cmds.attributeQuery("displayFilmGate", node=camera_shape, exists=True):
+            return None
+        if not cmds.getAttr("{}.displayFilmGate".format(camera_shape)):
+            return None
+        cmds.setAttr("{}.displayFilmGate".format(camera_shape), False)
+        return camera_shape
+    except Exception:
+        return None
+
+
+def _restore_film_gate(camera_shape):
+    if not camera_shape:
+        return
+    try:
+        cmds.setAttr("{}.displayFilmGate".format(camera_shape), True)
+    except Exception:
+        pass
+
+
 def _locate_video_output(export_file_path: str) -> str:
     """cmds.playblast's video formats each append their own extension to
     `filename`, and which exact extension a given format/compression combo
@@ -240,67 +283,73 @@ def publish_playblast() -> None:
             width = cmds.getAttr("defaultResolution.width")
             height = cmds.getAttr("defaultResolution.height")
 
-        if options["camera"]:
-            panel = cmds.getPanel(withFocus=True)
-            if panel and cmds.getPanel(typeOf=panel) == "modelPanel":
-                cmds.modelPanel(panel, edit=True, camera=options["camera"])
+        panel = cmds.getPanel(withFocus=True)
+        if options["camera"] and panel and cmds.getPanel(typeOf=panel) == "modelPanel":
+            cmds.modelPanel(panel, edit=True, camera=options["camera"])
 
-        if is_image:
-            # Current-frame-only capture — deliberately not the whole
-            # timeline turned into an image sequence (confirmed with the
-            # user 2026-07-20): startTime/endTime/frame all pinned to
-            # cmds.currentTime so exactly one still comes out, no matter
-            # what the saved frame_range_mode/start_frame/end_frame options
-            # say (those only apply to the video output mode).
-            current_time = cmds.currentTime(query=True)
-            image_format = options.get("image_format") or "png"
-            playblast_kwargs = {
-                "filename": export_file_path,
-                "format": "image",
-                "compression": image_format,
-                "qlt": options["quality"],
-                "width": width,
-                "height": height,
-                "percent": options["percent"],
-                "showOrnaments": options["show_ornaments"],
-                "offScreen": True,
-                "startTime": current_time,
-                "endTime": current_time,
-                "frame": [current_time],
-            }
-            cmds.playblast(**playblast_kwargs)
-            saved_path = _finalize_single_frame_image(export_file_path, image_format)
-        else:
-            playblast_kwargs = {
-                "filename": export_file_path,
-                "format": options["format"],
-                "compression": options["compression"],
-                "qlt": options["quality"],
-                "width": width,
-                "height": height,
-                "percent": options["percent"],
-                "showOrnaments": options["show_ornaments"],
-                "offScreen": True,
-            }
+        # Auto-disable Film Gate for whichever camera is actually being
+        # captured, restored afterward regardless of success/failure — a
+        # playblast shouldn't leave the viewport's display state changed.
+        film_gate_camera = _disable_film_gate(_resolve_camera_shape(panel))
+        try:
+            if is_image:
+                # Current-frame-only capture — deliberately not the whole
+                # timeline turned into an image sequence (confirmed with the
+                # user 2026-07-20): startTime/endTime/frame all pinned to
+                # cmds.currentTime so exactly one still comes out, no matter
+                # what the saved frame_range_mode/start_frame/end_frame options
+                # say (those only apply to the video output mode).
+                current_time = cmds.currentTime(query=True)
+                image_format = options.get("image_format") or "png"
+                playblast_kwargs = {
+                    "filename": export_file_path,
+                    "format": "image",
+                    "compression": image_format,
+                    "qlt": options["quality"],
+                    "width": width,
+                    "height": height,
+                    "percent": options["percent"],
+                    "showOrnaments": options["show_ornaments"],
+                    "offScreen": True,
+                    "startTime": current_time,
+                    "endTime": current_time,
+                    "frame": [current_time],
+                }
+                cmds.playblast(**playblast_kwargs)
+                saved_path = _finalize_single_frame_image(export_file_path, image_format)
+            else:
+                playblast_kwargs = {
+                    "filename": export_file_path,
+                    "format": options["format"],
+                    "compression": options["compression"],
+                    "qlt": options["quality"],
+                    "width": width,
+                    "height": height,
+                    "percent": options["percent"],
+                    "showOrnaments": options["show_ornaments"],
+                    "offScreen": True,
+                }
 
-            if options["frame_range_mode"] == "custom":
-                playblast_kwargs["startTime"] = options["start_frame"]
-                playblast_kwargs["endTime"] = options["end_frame"]
+                if options["frame_range_mode"] == "custom":
+                    playblast_kwargs["startTime"] = options["start_frame"]
+                    playblast_kwargs["endTime"] = options["end_frame"]
 
-            sound_node_name = ""
-            if options["sound"]:
-                sound_nodes = cmds.ls(type="audio")
-                sound_node_name = sound_nodes[0] if sound_nodes else ""
-                if sound_node_name:
-                    current_source_start = cmds.getAttr("{}.sourceStart".format(sound_node_name))
-                    current_offset = cmds.getAttr("{}.offset".format(sound_node_name))
-                    if current_source_start != 0:
-                        cmds.setAttr("{}.sourceStart".format(sound_node_name), 0)
-                        cmds.setAttr("{}.offset".format(sound_node_name), current_offset - current_source_start)
-                    playblast_kwargs["sound"] = sound_node_name
+                sound_node_name = ""
+                if options["sound"]:
+                    sound_nodes = cmds.ls(type="audio")
+                    sound_node_name = sound_nodes[0] if sound_nodes else ""
+                    if sound_node_name:
+                        current_source_start = cmds.getAttr("{}.sourceStart".format(sound_node_name))
+                        current_offset = cmds.getAttr("{}.offset".format(sound_node_name))
+                        if current_source_start != 0:
+                            cmds.setAttr("{}.sourceStart".format(sound_node_name), 0)
+                            cmds.setAttr("{}.offset".format(sound_node_name), current_offset - current_source_start)
+                        playblast_kwargs["sound"] = sound_node_name
 
-            cmds.playblast(**playblast_kwargs)
-            saved_path = _locate_video_output(export_file_path)
+                cmds.playblast(**playblast_kwargs)
+                saved_path = _locate_video_output(export_file_path)
+        finally:
+            _restore_film_gate(film_gate_camera)
 
         print("[UkorePlayblast] Playblast saved: {}".format(saved_path))
         message = "<hl>Playblast saved:</hl> {}".format(saved_path)
