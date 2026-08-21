@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime
 import fnmatch
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,7 +24,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.os_utils import open_in_file_explorer
 from ukoreshot_plugin.core import comment_store, discord_client, video_naming, video_path_store, video_sequence
 from ukoreshot_plugin.core.video_compress import VideoCompressionError, compress_to_fit
 from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, push_pointer
@@ -70,6 +71,20 @@ class _LibraryEntry:
     parsed: dict | None
     mtime: float
     share_state: dict
+
+
+def _reveal_in_file_explorer(path: Path) -> None:
+    """Plain stdlib, no dependency on any assumed host-app internal —
+    Windows-only (`explorer /select,`), matching this app's own platform
+    (see root CLAUDE.md's environment section). Deliberately not
+    core.os_utils.open_in_file_explorer or any other guessed app-internal
+    name: an unverified top-level import here would take down this
+    plugin's entire load if the name/module turned out wrong, for a single
+    minor convenience button."""
+    if sys.platform == "win32":
+        subprocess.run(["explorer", "/select,", str(path)])
+    else:
+        subprocess.run(["xdg-open", str(path.parent)])
 
 
 def _format_time_ago(mtime: float) -> str:
@@ -570,7 +585,7 @@ class UkoreShotPage(QWidget):
         except VideoCompressionError as exc:
             QMessageBox.warning(self, "Get Format Video Failed", str(exc))
             return
-        open_in_file_explorer(output_path)
+        _reveal_in_file_explorer(output_path)
 
     def _on_send_discord_clicked(self) -> None:
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
