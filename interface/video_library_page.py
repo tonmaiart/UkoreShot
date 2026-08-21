@@ -527,11 +527,16 @@ class UkoreShotPage(QWidget):
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None:
             self.player_widget.clear_video()
+            self.player_widget.set_comment_frames([])
             return
         if entry.video_path is not None:
             self.player_widget.load_video(entry.video_path)
         else:
             self.player_widget.load_sequence(entry.sequence_dir)
+        # Scrubber's own red comment-frame marks, added 2026-08-21 —
+        # reads straight off comments.json, same as Previous/Next Comment,
+        # so this never forces a sequence extraction just to show them.
+        self.player_widget.set_comment_frames(self._selected_entry_keyframe_indices())
 
     def _update_empty_state(self) -> None:
         # No dedicated empty-state widget in the new .ui (unlike the old

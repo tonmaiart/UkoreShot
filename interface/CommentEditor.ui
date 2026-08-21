@@ -255,6 +255,9 @@
             <layout class="QGridLayout" name="gridLayout">
              <item row="0" column="0">
               <widget class="QTableWidget" name="tableWidget_comment">
+               <property name="selectionMode">
+                <enum>QAbstractItemView::NoSelection</enum>
+               </property>
                <property name="showGrid">
                 <bool>false</bool>
                </property>
@@ -348,7 +351,7 @@ p, li { white-space: pre-wrap; }
              <item row="1" column="0">
               <widget class="QPushButton" name="pushButton_edit_message">
                <property name="text">
-                <string>PushButton</string>
+                <string>Edit Message</string>
                </property>
               </widget>
              </item>
@@ -371,18 +374,25 @@ p, li { white-space: pre-wrap; }
       <property name="bottomMargin">
        <number>20</number>
       </property>
-      <item row="0" column="4">
-       <spacer name="horizontalSpacer_7">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
+      <item row="0" column="2">
+       <widget class="QPushButton" name="pushButton_2">
+        <property name="minimumSize">
          <size>
-          <width>40</width>
-          <height>20</height>
+          <width>100</width>
+          <height>40</height>
          </size>
         </property>
-       </spacer>
+        <property name="font">
+         <font>
+          <pointsize>12</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="text">
+         <string>Cancel</string>
+        </property>
+       </widget>
       </item>
       <item row="0" column="3">
        <widget class="QPushButton" name="pushButton_save_comment">
@@ -416,26 +426,6 @@ p, li { white-space: pre-wrap; }
          </size>
         </property>
        </spacer>
-      </item>
-      <item row="0" column="2">
-       <widget class="QPushButton" name="pushButton_2">
-        <property name="minimumSize">
-         <size>
-          <width>100</width>
-          <height>40</height>
-         </size>
-        </property>
-        <property name="font">
-         <font>
-          <pointsize>12</pointsize>
-          <weight>75</weight>
-          <bold>true</bold>
-         </font>
-        </property>
-        <property name="text">
-         <string>Cancel</string>
-        </property>
-       </widget>
       </item>
      </layout>
     </widget>

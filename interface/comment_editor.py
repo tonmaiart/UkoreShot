@@ -366,6 +366,13 @@ class CommentEditor(QDialog):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         self.table.itemSelectionChanged.connect(self._on_table_row_selected)
+        # Gray selection highlight, added 2026-08-21 per the user's own
+        # request (was Qt's default blue) — targets the item cells
+        # specifically rather than QPalette.Highlight, so it doesn't also
+        # recolor selection in other widgets sharing this dialog's palette.
+        self.table.setStyleSheet(
+            "QTableWidget::item:selected { background-color: #5a5a5a; color: white; }"
+        )
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(_COL_ACTIVE, QHeaderView.Fixed)
@@ -543,14 +550,10 @@ class CommentEditor(QDialog):
             entry = self._frames.get(str(frame_index), {})
             comments = entry.get("comments", [])
             if comments:
-                # Always listed, even for the current frame — the trailing
-                # composer row below is *additional* (a way to add one
-                # more comment to whatever's on screen now), never a
-                # replacement for comments a frame already has. Fixed
-                # 2026-08-21 after a real bug: the current frame's own
-                # comments were vanishing from the table the moment it
-                # became current, since the composer row used to stand in
-                # for it unconditionally.
+                # Always listed, even for the current frame — see the
+                # composer-row note below for how the current frame's own
+                # row set and the composer row now stay mutually exclusive
+                # instead of duplicating each other.
                 for comment in comments:
                     rows.append((frame_index, comment))
             elif frame_index != self._current_frame_index:
@@ -561,22 +564,33 @@ class CommentEditor(QDialog):
                 # composer row instead, so it isn't duplicated here.
                 rows.append((frame_index, None))
 
-        # The composer row (always for whichever frame the player is
-        # currently on) used to be appended unconditionally last — fixed
-        # 2026-08-21 per the user's own request that the table always sort
-        # by keyframe: scrubbing to an earlier frame than whatever already
-        # had comments used to put its row at the very bottom instead of in
-        # numeric order. bisect_right places it after any existing rows for
-        # that same frame (reads as "the next new entry for this frame")
-        # while still keeping the whole table in ascending frame order.
-        insert_at = bisect.bisect_right([r[0] for r in rows], self._current_frame_index)
-        rows.insert(insert_at, (self._current_frame_index, None))
+        # The composer row (for whichever frame the player is currently on)
+        # only gets added when that frame has no comment rows of its own
+        # yet — fixed 2026-08-21 after a real duplicate-row report: this
+        # used to be appended *unconditionally*, so landing on a frame that
+        # already had a comment showed that comment's own row *and* a
+        # second, blank "37" row for the exact same frame right below it —
+        # confusing, looked like a stray duplicate keyframe rather than "an
+        # empty slot to add one more comment". Now the composer row exists
+        # only to give an otherwise-row-less current frame something to
+        # select and click Edit Message on. bisect_right (when it does
+        # apply) places it after any existing rows for that same frame,
+        # keeping the whole table in ascending frame order.
+        current_key = str(self._current_frame_index)
+        if not self._frames.get(current_key, {}).get("comments"):
+            insert_at = bisect.bisect_right([r[0] for r in rows], self._current_frame_index)
+            rows.insert(insert_at, (self._current_frame_index, None))
 
         self._suppress_selection_jump = True
         self.table.setRowCount(len(rows))
         for row, (frame_index, comment) in enumerate(rows):
             self._set_row(row, frame_index, comment)
         self._suppress_selection_jump = False
+
+        # Keeps the scrubber's own red comment-frame marks in sync with
+        # self._frames — _refresh_table already runs after every mutation
+        # and every frame change, so this is the one place that needs it.
+        self.player_widget.set_comment_frames(self._keyframe_indices())
 
     def _set_row(self, row: int, frame_index: int, comment: dict | None) -> None:
         active_item = QTableWidgetItem()

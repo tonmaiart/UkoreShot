@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QShortcut
+from PySide6.QtCore import QPointF, QRectF, QUrl, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication,
@@ -183,6 +183,146 @@ class _VideoStack(QWidget):
         self._hud.raise_()
 
 
+class TimelineSlider(QWidget):
+    """Custom scrubber bar, added 2026-08-21 per the user's own request to
+    replace the plain QSlider position_slider used to be: a plain QSlider
+    only jumps to the exact click point when dragging the handle itself —
+    clicking elsewhere on the groove instead moves by a single page step,
+    which reads as "unresponsive" for a scrubber where you want to land
+    exactly where you clicked. This widget instead computes the target
+    value directly from the click/drag x position every time (see
+    _value_at_x), so a single click anywhere on the bar snaps straight
+    there. Also draws a tick per frame (skipped once frames would be
+    packed closer than _MIN_TICK_SPACING_PX apart, which would otherwise
+    just paint an unreadable solid smear) and a red marker line for any
+    frame passed to set_marked_frames — used by comment_editor.py/
+    video_library_page.py to show which frames already have a saved
+    comment, revives the idea the pre-BananaSketch-extraction
+    _CommentAwareSlider had for the same purpose (see slider_row's own
+    history in PlayerWidget).
+
+    Exposes the same value/range/signal surface a QSlider caller here
+    needs (setRange/setValue/value/blockSignals — the last one is
+    QObject's own, works unmodified) so _on_slider_pressed/_released/
+    _moved and load_sequence's own setRange call don't need to change."""
+
+    valueChanged = Signal(int)
+    sliderPressed = Signal()
+    sliderReleased = Signal()
+    sliderMoved = Signal(int)
+
+    _HEIGHT = 22
+    _TRACK_COLOR = QColor("#3a3a3a")
+    _FILLED_COLOR = QColor("#5865f2")
+    _HANDLE_COLOR = QColor("#ffffff")
+    _HANDLE_BORDER_COLOR = QColor("#222222")
+    _TICK_COLOR = QColor(255, 255, 255, 40)
+    _MARK_COLOR = QColor("#ff3b30")
+    _MIN_TICK_SPACING_PX = 4
+    _TRACK_THICKNESS = 6
+    _HANDLE_RADIUS = 7
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._minimum = 0
+        self._maximum = 0
+        self._value = 0
+        self._marked_frames: set[int] = set()
+        self.setFixedHeight(self._HEIGHT)
+        self.setMinimumWidth(40)
+
+    def setRange(self, minimum: int, maximum: int) -> None:
+        self._minimum = minimum
+        self._maximum = max(minimum, maximum)
+        self._value = max(self._minimum, min(self._value, self._maximum))
+        self.update()
+
+    def setValue(self, value: int) -> None:
+        value = max(self._minimum, min(value, self._maximum))
+        if value == self._value:
+            return
+        self._value = value
+        self.update()
+
+    def value(self) -> int:
+        return self._value
+
+    def set_marked_frames(self, frames) -> None:
+        """frames: any iterable of frame indices to draw a red marker line
+        for (e.g. comment_editor.py's own _keyframe_indices(), or
+        video_library_page.py's _selected_entry_keyframe_indices())."""
+        self._marked_frames = set(frames)
+        self.update()
+
+    def _value_at_x(self, x: float) -> int:
+        span = max(1, self._maximum - self._minimum)
+        width = max(1, self.width())
+        fraction = max(0.0, min(1.0, x / width))
+        return round(self._minimum + fraction * span)
+
+    def _x_at_value(self, value: int) -> float:
+        span = max(1, self._maximum - self._minimum)
+        return (value - self._minimum) / span * self.width()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() != Qt.LeftButton or self._maximum <= self._minimum:
+            return
+        self._value = self._value_at_x(event.position().x())
+        self.update()
+        self.sliderPressed.emit()
+        self.sliderMoved.emit(self._value)
+
+    def mouseMoveEvent(self, event) -> None:
+        if not (event.buttons() & Qt.LeftButton) or self._maximum <= self._minimum:
+            return
+        self._value = self._value_at_x(event.position().x())
+        self.update()
+        self.sliderMoved.emit(self._value)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() != Qt.LeftButton:
+            return
+        self.valueChanged.emit(self._value)
+        self.sliderReleased.emit()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        mid_y = self.height() / 2
+        half_track = self._TRACK_THICKNESS / 2
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self._TRACK_COLOR)
+        painter.drawRoundedRect(QRectF(0, mid_y - half_track, self.width(), self._TRACK_THICKNESS), half_track, half_track)
+
+        span = self._maximum - self._minimum
+        if span > 0:
+            px_per_frame = self.width() / span
+            if px_per_frame >= self._MIN_TICK_SPACING_PX:
+                painter.setPen(QPen(self._TICK_COLOR, 1))
+                for frame in range(self._minimum, self._maximum + 1):
+                    x = self._x_at_value(frame)
+                    painter.drawLine(QPointF(x, mid_y - half_track), QPointF(x, mid_y + half_track))
+
+            filled_width = self._x_at_value(self._value)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(self._FILLED_COLOR)
+            painter.drawRoundedRect(QRectF(0, mid_y - half_track, filled_width, self._TRACK_THICKNESS), half_track, half_track)
+
+            if self._marked_frames:
+                painter.setPen(QPen(self._MARK_COLOR, 2))
+                for frame in self._marked_frames:
+                    if self._minimum <= frame <= self._maximum:
+                        x = self._x_at_value(frame)
+                        painter.drawLine(QPointF(x, 1), QPointF(x, self.height() - 1))
+
+        handle_x = self._x_at_value(self._value) if span > 0 else 0.0
+        painter.setPen(QPen(self._HANDLE_BORDER_COLOR, 1))
+        painter.setBrush(self._HANDLE_COLOR)
+        painter.drawEllipse(QPointF(handle_x, mid_y), self._HANDLE_RADIUS, self._HANDLE_RADIUS)
+        painter.end()
+
+
 class PlayerWidget(QWidget):
     """Dual-source playback for whichever video/sequence UkoreShotPage's
     table (or CommentEditor) has selected. `load_video(path)` plays a real
@@ -317,13 +457,13 @@ class PlayerWidget(QWidget):
         self.speed_label.setMinimumWidth(40)
 
         # Own row, separate from transport_row (below) — leftmost/rightmost
-        # labels show the frame range. Plain QSlider now — used to carry
-        # comment-frame tick marks (_CommentAwareSlider) before this
-        # plugin stopped reading comment data entirely (moved to
-        # cache/plugins/BananaSketch/ 2026-08-08).
+        # labels show the frame range. TimelineSlider (see above) as of
+        # 2026-08-21 — click/drag-anywhere-snaps, per-frame grid, and red
+        # marks for commented frames (set_comment_frames below), reviving
+        # the idea the pre-BananaSketch-extraction _CommentAwareSlider had.
         self.start_frame_label = QLabel("0")
         self.end_frame_label = QLabel("0")
-        self.position_slider = QSlider(Qt.Horizontal)
+        self.position_slider = TimelineSlider()
         self.position_slider.sliderPressed.connect(self._on_slider_pressed)
         self.position_slider.sliderReleased.connect(self._on_slider_released)
         self.position_slider.sliderMoved.connect(self._on_slider_moved)
@@ -544,6 +684,16 @@ class PlayerWidget(QWidget):
         this to jump the player when a keyframe comment table row is
         double-clicked."""
         self._jump_to_frame(frame_index)
+
+    def set_comment_frames(self, frames) -> None:
+        """Forwards to TimelineSlider.set_marked_frames — comment_editor.py
+        calls this with its own _keyframe_indices() whenever self._frames
+        changes; video_library_page.py calls it with
+        _selected_entry_keyframe_indices() whenever the selected library
+        row changes. PlayerWidget itself has no comment-data awareness —
+        this is just a pass-through so callers don't need to reach into
+        self.position_slider directly."""
+        self.position_slider.set_marked_frames(frames)
 
     def _on_goto_frame_entered(self) -> None:
         self._jump_to_frame(self.goto_frame_spin.value())
