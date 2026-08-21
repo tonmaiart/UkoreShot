@@ -7,18 +7,22 @@ from pathlib import Path
 # exactly (two separate Python environments — Maya's Python can't import
 # this desktop-side plugin package, same reason every other "construct
 # straight off disk" duplication in this codebase exists) —
-# SEQ_ShotCode_Variation_index_version, see ../maya-scripts/README.md for
-# the full naming convention.
-_FILENAME_PATTERN = re.compile(r"^([^_]+)_([^_]+)_([^_]+)_(\d+)_v(\d+)$")
+# SEQ_ShotCode_index_version, see ../maya-scripts/README.md for the full
+# naming convention. The "variation" token was dropped from the convention
+# 2026-08-21, per the user's own request — a video playblasted before that
+# change still has it in its filename and just falls through to the
+# "doesn't match" case below, same as any other non-conforming name.
+_FILENAME_PATTERN = re.compile(r"^([^_]+)_([^_]+)_(\d+)_v(\d+)$")
 
 
 def parse_video_filename(video_path: Path) -> dict | None:
-    """{"sequence", "shot_code", "variation", "index", "version"} parsed
-    off video_path's filename stem, or None if it doesn't match
+    """{"sequence", "shot_code", "index", "version"} parsed off
+    video_path's filename stem, or None if it doesn't match
     UkorePlayblast's flat naming convention — a playblast from before
     2026-07-20 still sitting in its old `<sequence>/<shot_code>/vNNN/`
     subfolder (left alone there per the user's own decision, see
     ../maya-scripts/README.md's "Pre-2026-07-20 shot/version subfolders"),
+    a pre-2026-08-21 file still carrying the now-dropped variation token,
     or any other file that just doesn't happen to follow this convention.
     video_library_page.py buckets a None result under "Unknown" (its Name
     column just shows the raw stem either way) rather than erroring or
@@ -28,11 +32,10 @@ def parse_video_filename(video_path: Path) -> dict | None:
     match = _FILENAME_PATTERN.match(video_path.stem)
     if not match:
         return None
-    sequence, shot_code, variation, index_str, version_str = match.groups()
+    sequence, shot_code, index_str, version_str = match.groups()
     return {
         "sequence": sequence,
         "shot_code": shot_code,
-        "variation": variation,
         "index": int(index_str),
         "version": int(version_str),
     }

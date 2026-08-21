@@ -24,8 +24,12 @@ further detail):
   resolves both the (fixed, per-machine, gitignored, under UkoreHub's own
   `cache_dir`) video library root and a separate export folder for Get
   Video/Get Video - Commented (see "Get Video" below). `video_naming.py`
-  parses UkorePlayblast's flat `SEQ_ShotCode_Variation_index_version.ext`
-  filenames. `video_sequence.py` lazily extracts a video into a numbered
+  parses UkorePlayblast's flat `SEQ_ShotCode_index_version.ext` filenames
+  (the `Variation` token was dropped from the convention 2026-08-21, per
+  the user's own request — a pre-2026-08-21 file still carrying it just
+  falls through to the "doesn't match" case, same as any other
+  non-conforming name). `video_sequence.py` lazily extracts a video into a
+  numbered
   PNG sequence + optional audio track via ffmpeg (`ensure_sequence`), and
   the reverse direction (`encode_sequence_to_video`) for exporting a
   composited sequence back to an `.mp4`. `comment_store.py` is per-video
@@ -63,7 +67,13 @@ further detail):
   (`_current_entry_frames`) rather than re-reading it from disk on every
   frame tick during playback. The button's own icon swaps with its state
   (`_update_show_comment_icon`) — `comment_mode.png` while showing
-  comments, `icons8-video-50.png` while off.
+  comments, `icons8-video-50.png` while off. `plainTextEdit_comment`
+  ("Current Keyframe Comment" box, added 2026-08-21) always shows whichever
+  text comment(s) are saved on the frame currently on screen — independent
+  of `pushButton_show_comment_toggle` (that one only governs the drawing
+  overlay) — one per line, refreshed via `_refresh_comment_text()` off the
+  same cached `_current_entry_frames` `_refresh_frame_strokes` reads, so it
+  stays cheap on every frame tick during playback too.
   `CommentEditor`'s Keyframe Comment table no longer auto-adds a row for
   whichever frame the player happens to be on (removed 2026-08-21, per the
   user's own request) — a frame only ever gets a row once it actually has
@@ -119,15 +129,29 @@ further detail):
   desktop app) — nothing here imports from `core/`/`interface/`, and vice
   versa; where both sides need to agree on something (the video-root
   folder, the naming convention) it's duplicated deliberately rather than
-  shared. Registers "Ukore Shot Playblast" (General category) and
-  "Playblast Options..." (Anim category) into `ukore_menu`'s central
-  "Ukore Tools" registry. `function.py`'s `publish_playblast()` also
-  auto-disables Film Gate + Resolution Gate display (`displayFilmGate`/
-  `displayResolution`) on every camera in the scene for the duration of
-  the capture (2026-08-21 — was just the capturing camera's Film Gate
-  before; `_disable_gate_and_resolution_display`/
-  `_restore_gate_and_resolution_display` record each attribute's prior
-  value first and restore it afterward either way, success or failure).
+  shared. Registers only "Ukore Shot Playblast" (General category) into
+  `ukore_menu`'s central "Ukore Tools" registry — the old "Playblast
+  Options..." (Anim category) item, its dialog (`options_dialog.py`), and
+  its per-repo settings store (`options_store.py`) were all removed
+  2026-08-21, per the user's own request: every playblast setting is now
+  hardcoded in `function.py`, nothing left to configure per repo/artist.
+  Hardcoded settings: qt/H.264 at 80% quality, 80% viewport scale, current
+  timeline frame range (no `startTime`/`endTime` override — Maya's own
+  playblast default), active viewport camera (never overridden), sound
+  included when the scene has an audio node, ornaments/HUD off, and no
+  variation token in the filename anymore (see "Flat naming convention"
+  below). `publish_playblast()` also forces the scene's render settings to
+  Arnold + the HD 1080 image size preset (`_apply_render_settings` —
+  `defaultRenderGlobals.currentRenderer` + `defaultResolution`'s
+  width/height/deviceAspectRatio/pixelAspect) before every capture, and the
+  playblast's own width/height are read back off `defaultResolution`
+  afterward, so the two can never disagree. `_enable_gate_display`/
+  `_restore_gate_display` turn Resolution Gate + Gate Mask **on** for every
+  camera in the scene for the duration of the capture (2026-08-21,
+  reversing the tool's previous hide-the-gates behavior, per the user's own
+  request — the render frame is now meant to be visibly burned into the
+  playblast), recording each attribute's prior value first and restoring it
+  afterward either way, success or failure.
   `_resolve_filename_stem`'s version/index pick is a scan-based guess
   (`_matching_versions`, regex against existing filenames) that can miss
   an existing file whose actual on-disk name doesn't cleanly match the

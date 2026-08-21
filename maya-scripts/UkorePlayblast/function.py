@@ -1,17 +1,12 @@
-"""Configurable playblast — replaces UkoreMaya's old hardcoded "Quick
-Playblast" (plugins/repo_internal/MayaToolkit/maya-scripts/UkoreMaya/core/
-function.py's now-removed publish_playblast). Destination folder is a
-fixed per-machine folder under PublishApi.repo_paths.find_cache_dir(), keyed
-by project/repo (see _resolve_video_root) — not configurable, and never
-synced via git/repo sync; the filename itself encodes
-shot/variation/index/version (see "Flat naming convention" in
-maya-scripts/README.md, and _resolve_filename_stem below) instead of the
-folder structure carrying that information. Options come from this tool's
-own "Playblast Options..." dialog inside Maya (options_dialog.py — confirmed
-with the user 2026-07-19 this belongs in Maya, not a UkoreHub Settings tab)
-via options_store.py, resolved the same "construct the store straight off
-disk" way every Maya-side module in this codebase uses (Maya's Python has no
-PluginAPI instance), via PublishApi for active-repo resolution."""
+"""Playblast — fully hardcoded (confirmed with the user 2026-08-21; the old
+"Playblast Options..." dialog and options_store.py were removed, along with
+its menu item — nothing here is configurable per-repo/per-artist anymore).
+Destination folder is a fixed per-machine folder under
+PublishApi.repo_paths.find_cache_dir(), keyed by project/repo (see
+_resolve_video_root) — not configurable, and never synced via git/repo
+sync; the filename itself encodes shot/index/version (see "Flat naming
+convention" in maya-scripts/README.md, and _resolve_filename_stem below)
+instead of the folder structure carrying that information."""
 
 from __future__ import annotations
 
@@ -20,26 +15,41 @@ import re
 
 import maya.cmds as cmds
 from PublishApi import repo_paths
-from UkorePlayblast import options_store
 
 _SHOT_CODE_PATTERN = re.compile(r"^([A-Za-z]+)(\d+)")
-# SEQ_ShotCode_Variation_index_version — see maya-scripts/README.md's "Flat
-# naming convention" section. Every one of the first three tokens is
-# sanitized to letters/digits only before a filename is ever built
-# (_sanitize_token), so splitting a stem on "_" and expecting exactly 5
-# parts is safe; this is also what lets
+# SEQ_ShotCode_index_version — see maya-scripts/README.md's "Flat naming
+# convention" section. Both tokens are sanitized to letters/digits only
+# before a filename is ever built (_sanitize_token), so splitting a stem on
+# "_" and expecting exactly 4 parts is safe; this is also what lets
 # cache/plugins/UkoreShot/core/video_naming.py (the desktop-side reader of
 # these same filenames) parse them back reliably.
-_FILENAME_PATTERN = re.compile(r"^([^_]+)_([^_]+)_([^_]+)_(\d+)_v(\d+)$")
+_FILENAME_PATTERN = re.compile(r"^([^_]+)_([^_]+)_(\d+)_v(\d+)$")
+
+# Hardcoded studio-standard playblast settings (2026-08-21) — qt/H.264 at
+# 80% quality, 80% viewport scale, HD 1080 resolution driven off (and
+# forced onto) the scene's render settings.
+_FORMAT = "qt"
+_COMPRESSION = "H.264"
+_QUALITY = 80
+_VIEWPORT_SCALE = 80
+_RESOLUTION_WIDTH = 1920
+_RESOLUTION_HEIGHT = 1080
+_RESOLUTION_DEVICE_ASPECT = 1.778
+_RESOLUTION_PIXEL_ASPECT = 1.0
+# Resolution Gate + Gate Mask — turned ON for the capture instead of off
+# (2026-08-21, reversing the previous hide-the-gates behavior per the
+# user's own request), so the render frame is visibly burned into the
+# playblast.
+_GATE_DISPLAY_ATTRS = ("displayResolution", "displayGateMask")
 
 
 def _sanitize_token(value: str) -> str:
     """Strips anything that isn't a letter/digit — the flat filename
-    convention splits its stem on "_" into exactly 5 parts, so a sequence/
-    shot/variation containing an underscore (or a space, which is worse to
-    have literally in a shared-drive filename anyway) would silently
-    corrupt that split. Falls back to "x" for a value that sanitizes down
-    to nothing (e.g. an all-symbols scene name)."""
+    convention splits its stem on "_" into exactly 4 parts, so a sequence/
+    shot containing an underscore (or a space, which is worse to have
+    literally in a shared-drive filename anyway) would silently corrupt
+    that split. Falls back to "x" for a value that sanitizes down to
+    nothing (e.g. an all-symbols scene name)."""
     return re.sub(r"[^A-Za-z0-9]", "", value) or "x"
 
 
@@ -51,9 +61,7 @@ def _resolve_video_root(project_id: str, repo_id: str):
     library reads from. Duplicated rather than imported directly: Maya's
     Python (mayapy) is a completely separate interpreter from UkoreHub's
     desktop app and has no `api` (PluginAPI) instance to resolve
-    `api.cache_dir` from — see core/README.md's naming note. No longer
-    takes a repo_path — video storage doesn't live inside the repo checkout
-    at all, so it's not tied to git/repo sync across machines."""
+    `api.cache_dir` from — see core/README.md's naming note."""
     video_root = repo_paths.find_cache_dir() / "ukore_shot" / project_id / repo_id
     video_root.mkdir(parents=True, exist_ok=True)
     return video_root
@@ -81,9 +89,9 @@ def _resolve_seq_shot(scene_basename: str):
     return "misc", _sanitize_token(scene_basename)
 
 
-def _matching_versions(video_root, sequence: str, shot_code: str, variation: str):
+def _matching_versions(video_root, sequence: str, shot_code: str):
     """{version: [index, index, ...]} for every existing flat file in
-    video_root whose stem matches this exact sequence/shot/variation via
+    video_root whose stem matches this exact sequence/shot via
     _FILENAME_PATTERN. video_root's top level only (not recursive) — this
     convention has no subfolders of its own; a legacy shot/version-
     subfoldered playblast from before 2026-07-20 sits inside a subfolder
@@ -100,25 +108,15 @@ def _matching_versions(video_root, sequence: str, shot_code: str, variation: str
         match = _FILENAME_PATTERN.match(path.stem)
         if not match:
             continue
-        seq, shot, var, index_str, version_str = match.groups()
-        if seq == sequence and shot == shot_code and var == variation:
+        seq, shot, index_str, version_str = match.groups()
+        if seq == sequence and shot == shot_code:
             result.setdefault(int(version_str), []).append(int(index_str))
     return result
 
 
-def _next_version(video_root, sequence: str, shot_code: str, variation: str) -> int:
-    versions = _matching_versions(video_root, sequence, shot_code, variation)
+def _next_version(video_root, sequence: str, shot_code: str) -> int:
+    versions = _matching_versions(video_root, sequence, shot_code)
     return (max(versions) + 1) if versions else 1
-
-
-def _latest_version(video_root, sequence: str, shot_code: str, variation: str):
-    versions = _matching_versions(video_root, sequence, shot_code, variation)
-    return max(versions) if versions else None
-
-
-def _next_index(video_root, sequence: str, shot_code: str, variation: str, version: int) -> int:
-    indices = _matching_versions(video_root, sequence, shot_code, variation).get(version, [])
-    return (max(indices) + 1) if indices else 1
 
 
 def _stem_is_free(video_root, stem: str) -> bool:
@@ -136,103 +134,75 @@ def _stem_is_free(video_root, stem: str) -> bool:
     return not any(p.name.startswith(prefix) for p in video_root.iterdir() if p.is_file())
 
 
-def _resolve_filename_stem(video_root, sequence: str, shot_code: str, variation: str, *, is_image: bool) -> str:
-    """SEQ_ShotCode_Variation_index_version, no extension. A video
-    playblast always starts a brand-new version (index always "001" — one
-    clip is the whole version). A current-frame image playblast instead
-    reuses whichever version for this exact sequence/shot/variation
-    already exists (creating v001 if this is the first playblast for it
-    at all) and takes the next index within *that* version — confirmed
-    with the user 2026-07-20: an image playblast "adds an index into the
-    same version" rather than starting a new one, so a set of stills for
-    one take ends up as v001 index 001, 002, 003... instead of each being
-    its own version.
+def _resolve_filename_stem(video_root, sequence: str, shot_code: str) -> str:
+    """SEQ_ShotCode_index_version, no extension. Every playblast starts a
+    brand-new version (index always "001" — one clip is the whole
+    version).
 
-    The initial version/index picked above only trusts _matching_versions'
+    The initial version picked above only trusts _matching_versions'
     regex scan of existing files, which can miss one whose actual on-disk
-    name doesn't cleanly match SEQ_ShotCode_Variation_index_version.ext
-    (e.g. a Maya output format/compression combo that appends more than a
-    single clean extension) — that made the "next" version look free when
-    it wasn't, so cmds.playblast aborted with a real "file exists" error
-    instead of ever writing (fixed 2026-08-21, a real user report). The
-    while loop below is a second, independent check straight against the
-    filesystem (_stem_is_free, no regex) — it keeps bumping past an exact
-    collision until the candidate stem is genuinely free, regardless of
-    why the scan-based pick above missed it."""
-    if is_image:
-        version = _latest_version(video_root, sequence, shot_code, variation)
-        if version is None:
-            version = 1
-        index = _next_index(video_root, sequence, shot_code, variation, version)
-    else:
-        version = _next_version(video_root, sequence, shot_code, variation)
-        index = 1
-    stem = "{}_{}_{}_{:03d}_v{:03d}".format(sequence, shot_code, variation, index, version)
+    name doesn't cleanly match SEQ_ShotCode_index_version.ext (e.g. a Maya
+    output format/compression combo that appends more than a single clean
+    extension) — that made the "next" version look free when it wasn't, so
+    cmds.playblast aborted with a real "file exists" error instead of ever
+    writing (fixed 2026-08-21, a real user report). The while loop below is
+    a second, independent check straight against the filesystem
+    (_stem_is_free, no regex) — it keeps bumping past an exact collision
+    until the candidate stem is genuinely free, regardless of why the
+    scan-based pick above missed it."""
+    version = _next_version(video_root, sequence, shot_code)
+    index = 1
+    stem = "{}_{}_{:03d}_v{:03d}".format(sequence, shot_code, index, version)
     while not _stem_is_free(video_root, stem):
-        if is_image:
-            index += 1
-        else:
-            version += 1
-        stem = "{}_{}_{}_{:03d}_v{:03d}".format(sequence, shot_code, variation, index, version)
+        version += 1
+        stem = "{}_{}_{:03d}_v{:03d}".format(sequence, shot_code, index, version)
     return stem
 
 
-def _finalize_single_frame_image(export_file_path: str, image_format: str) -> str:
-    """cmds.playblast's format="image" always appends its own frame-number
-    suffix to `filename` (e.g. "<export_file_path>.0001.<ext>"), even for
-    a single-frame capture — there is no Maya flag to suppress it. Renamed
-    to the exact target name afterward so this tool's own naming
-    convention (SEQ_Shot_variation_index_version.ext) still holds for
-    image output too. The produced file is located by globbing the
-    directory for anything starting with the same base name rather than
-    assuming an exact zero-padding width, since that padding isn't
-    documented as stable across Maya versions."""
-    directory = os.path.dirname(export_file_path)
-    base_name = os.path.basename(export_file_path)
-    target_path = "{}.{}".format(export_file_path, image_format)
-    target_name = os.path.basename(target_path)
-    candidates = sorted(
-        name
-        for name in os.listdir(directory)
-        if name.startswith(base_name + ".") and name.endswith("." + image_format) and name != target_name
-    )
-    if candidates:
-        os.replace(os.path.join(directory, candidates[0]), target_path)
-    return target_path
+def _apply_render_settings():
+    """Forces the scene's render settings to Arnold + the HD 1080 image
+    size preset before every playblast (2026-08-21, per the user's own
+    request) — both the renderer choice and the resolution are studio-wide
+    standards now, not something a scene should be able to drift away
+    from. width/height/deviceAspectRatio/pixelAspect are exactly what
+    Maya's own "HD 1080" Render Settings preset sets."""
+    cmds.setAttr("defaultRenderGlobals.currentRenderer", "arnold", type="string")
+    cmds.setAttr("defaultResolution.width", _RESOLUTION_WIDTH)
+    cmds.setAttr("defaultResolution.height", _RESOLUTION_HEIGHT)
+    cmds.setAttr("defaultResolution.deviceAspectRatio", _RESOLUTION_DEVICE_ASPECT)
+    cmds.setAttr("defaultResolution.pixelAspect", _RESOLUTION_PIXEL_ASPECT)
 
 
-def _disable_gate_and_resolution_display():
-    """Turns displayFilmGate and displayResolution off for every camera in
-    the scene for the duration of a playblast — not just whichever camera
-    is actually being captured through (the user's own request, replacing
-    the old single-capturing-camera Film Gate toggle). Records each
-    attribute's prior value first so
-    _restore_gate_and_resolution_display can put back exactly what was
-    there before, only for the attributes actually flipped off here (an
-    attribute already off is left alone and never added to the returned
-    list, so restoring can't accidentally turn one back on that wasn't on
-    to begin with). Swallows any per-camera/per-attribute Maya API error —
-    a camera missing one of these attributes, or any other resolution
-    hiccup, just leaves that one attribute untouched rather than failing
-    the whole playblast."""
+def _enable_gate_display():
+    """Turns Resolution Gate + Gate Mask on for every camera in the scene
+    for the duration of a playblast (2026-08-21, per the user's own
+    request — reverses the tool's previous hide-the-gates behavior).
+    Records each attribute's prior value first so _restore_gate_display can
+    put back exactly what was there before, only for the attributes
+    actually flipped on here (an attribute already on is left alone and
+    never added to the returned list, so restoring can't accidentally turn
+    one off that wasn't off to begin with). Swallows any per-camera/per-
+    attribute Maya API error — a camera missing one of these attributes
+    just leaves that one attribute untouched rather than failing the whole
+    playblast."""
     saved_state = []
     for camera_shape in cmds.ls(type="camera") or []:
-        for attr in ("displayFilmGate", "displayResolution"):
+        for attr in _GATE_DISPLAY_ATTRS:
             try:
                 plug = "{}.{}".format(camera_shape, attr)
-                if not cmds.getAttr(plug):
+                if cmds.getAttr(plug):
                     continue
-                cmds.setAttr(plug, False)
+                cmds.setAttr(plug, True)
                 saved_state.append((camera_shape, attr))
             except Exception:
                 continue
     return saved_state
 
 
-def _restore_gate_and_resolution_display(saved_state):
+def _restore_gate_display(saved_state):
     for camera_shape, attr in saved_state:
         try:
-            cmds.setAttr("{}.{}".format(camera_shape, attr), True)
+            cmds.setAttr("{}.{}".format(camera_shape, attr), False)
         except Exception:
             pass
 
@@ -242,45 +212,15 @@ def _locate_video_output(export_file_path: str) -> str:
     `filename`, and which exact extension a given format/compression combo
     actually produces is Maya-version-dependent (e.g. "qt"+"H.264" writes
     .mp4 on some Maya versions, .mov on others) — glob for whatever Maya
-    actually wrote next to export_file_path rather than assuming, the same
-    don't-assume-the-extension approach _finalize_single_frame_image already
-    uses for image mode. Raises RuntimeError if nothing matches (playblast
-    silently produced no file)."""
+    actually wrote next to export_file_path rather than assuming. Raises
+    RuntimeError if nothing matches (playblast silently produced no
+    file)."""
     directory = os.path.dirname(export_file_path)
     base_name = os.path.basename(export_file_path)
     candidates = sorted(name for name in os.listdir(directory) if name.startswith(base_name + "."))
     if not candidates:
         raise RuntimeError("Maya's playblast did not produce an output file at {}".format(export_file_path))
     return os.path.join(directory, candidates[0])
-
-
-def resolve_destination_path():
-    """Full file path (including extension) the next publish_playblast()
-    call would write, without creating anything or running Maya's
-    playblast — used by options_dialog.py's destination_label to preview
-    exactly what a playblast right now would produce. Meaningful as a full
-    *file* preview (not just a folder, like before 2026-07-20) now that
-    the video root is flat and the filename itself is where all the
-    shot/variation/index/version information lives. Video mode's extension
-    here is a best-effort guess from options["format"] alone (there's no
-    file on disk yet to glob, unlike _locate_video_output — Maya's actual
-    written extension for "qt"+"H.264" can differ by Maya version), so the
-    label may show ".qt" where the real saved file ends up ".mp4"/".mov";
-    publish_playblast()'s own printed/in-view message always reflects the
-    real path. Raises RuntimeError with the same human-readable reasons
-    publish_playblast() itself would
-    hit."""
-    project, repo, _ = repo_paths.get_active_repo()
-    if project is None:
-        raise RuntimeError("No active repo selected in UkoreHub. Open UkoreHub, pick a project/repo, then try again.")
-    video_root = _resolve_video_root(project.id, repo.id)
-    options = options_store.get_options(project.id, repo.id)
-    sequence, shot_code = _resolve_seq_shot(_current_scene_basename())
-    variation = _sanitize_token(options.get("variation") or "layout")
-    is_image = options.get("output_mode") == "current_frame_image"
-    stem = _resolve_filename_stem(video_root, sequence, shot_code, variation, is_image=is_image)
-    extension = (options.get("image_format") or "png") if is_image else options["format"]
-    return video_root / "{}.{}".format(stem, extension)
 
 
 def publish_playblast() -> None:
@@ -292,96 +232,53 @@ def publish_playblast() -> None:
 
         video_root = _resolve_video_root(project.id, repo.id)
 
-        options = options_store.get_options(project.id, repo.id)
-        print("[UkorePlayblast] Options: {}".format(options))
-
         sequence, shot_code = _resolve_seq_shot(_current_scene_basename())
-        variation = _sanitize_token(options.get("variation") or "layout")
-        is_image = options.get("output_mode") == "current_frame_image"
         # forceOverwrite is deliberately never passed to cmds.playblast()
         # below (defaults to False) — an existing playblast should never
         # get silently overwritten, only ever get a fresh name instead;
         # _resolve_filename_stem's own collision-avoidance loop
         # (_stem_is_free) is what guarantees this stem is actually free.
-        stem = _resolve_filename_stem(video_root, sequence, shot_code, variation, is_image=is_image)
+        stem = _resolve_filename_stem(video_root, sequence, shot_code)
         export_file_path = os.path.join(str(video_root), stem)
         print("[UkorePlayblast] Destination folder: {}".format(video_root))
         print("[UkorePlayblast] Filename: {}".format(stem))
 
-        if options["resolution_mode"] == "custom":
-            width = options["width"]
-            height = options["height"]
-        else:
-            width = cmds.getAttr("defaultResolution.width")
-            height = cmds.getAttr("defaultResolution.height")
+        _apply_render_settings()
+        width = cmds.getAttr("defaultResolution.width")
+        height = cmds.getAttr("defaultResolution.height")
 
-        panel = cmds.getPanel(withFocus=True)
-        if options["camera"] and panel and cmds.getPanel(typeOf=panel) == "modelPanel":
-            cmds.modelPanel(panel, edit=True, camera=options["camera"])
-
-        # Auto-disable Film Gate + Resolution Gate display for every camera
-        # in the scene, restored afterward regardless of success/failure —
-        # a playblast shouldn't leave the viewport's display state changed.
-        gate_display_state = _disable_gate_and_resolution_display()
+        # Resolution Gate + Gate Mask turned on for every camera in the
+        # scene for the duration of the capture, restored afterward
+        # regardless of success/failure — a playblast shouldn't leave the
+        # viewport's display state changed.
+        gate_display_state = _enable_gate_display()
         try:
-            if is_image:
-                # Current-frame-only capture — deliberately not the whole
-                # timeline turned into an image sequence (confirmed with the
-                # user 2026-07-20): startTime/endTime/frame all pinned to
-                # cmds.currentTime so exactly one still comes out, no matter
-                # what the saved frame_range_mode/start_frame/end_frame options
-                # say (those only apply to the video output mode).
-                current_time = cmds.currentTime(query=True)
-                image_format = options.get("image_format") or "png"
-                playblast_kwargs = {
-                    "filename": export_file_path,
-                    "format": "image",
-                    "compression": image_format,
-                    "qlt": options["quality"],
-                    "width": width,
-                    "height": height,
-                    "percent": options["percent"],
-                    "showOrnaments": options["show_ornaments"],
-                    "offScreen": True,
-                    "startTime": current_time,
-                    "endTime": current_time,
-                    "frame": [current_time],
-                }
-                cmds.playblast(**playblast_kwargs)
-                saved_path = _finalize_single_frame_image(export_file_path, image_format)
-            else:
-                playblast_kwargs = {
-                    "filename": export_file_path,
-                    "format": options["format"],
-                    "compression": options["compression"],
-                    "qlt": options["quality"],
-                    "width": width,
-                    "height": height,
-                    "percent": options["percent"],
-                    "showOrnaments": options["show_ornaments"],
-                    "offScreen": True,
-                }
+            playblast_kwargs = {
+                "filename": export_file_path,
+                "format": _FORMAT,
+                "compression": _COMPRESSION,
+                "qlt": _QUALITY,
+                "width": width,
+                "height": height,
+                "percent": _VIEWPORT_SCALE,
+                "showOrnaments": False,
+                "offScreen": True,
+            }
 
-                if options["frame_range_mode"] == "custom":
-                    playblast_kwargs["startTime"] = options["start_frame"]
-                    playblast_kwargs["endTime"] = options["end_frame"]
+            sound_nodes = cmds.ls(type="audio")
+            sound_node_name = sound_nodes[0] if sound_nodes else ""
+            if sound_node_name:
+                current_source_start = cmds.getAttr("{}.sourceStart".format(sound_node_name))
+                current_offset = cmds.getAttr("{}.offset".format(sound_node_name))
+                if current_source_start != 0:
+                    cmds.setAttr("{}.sourceStart".format(sound_node_name), 0)
+                    cmds.setAttr("{}.offset".format(sound_node_name), current_offset - current_source_start)
+                playblast_kwargs["sound"] = sound_node_name
 
-                sound_node_name = ""
-                if options["sound"]:
-                    sound_nodes = cmds.ls(type="audio")
-                    sound_node_name = sound_nodes[0] if sound_nodes else ""
-                    if sound_node_name:
-                        current_source_start = cmds.getAttr("{}.sourceStart".format(sound_node_name))
-                        current_offset = cmds.getAttr("{}.offset".format(sound_node_name))
-                        if current_source_start != 0:
-                            cmds.setAttr("{}.sourceStart".format(sound_node_name), 0)
-                            cmds.setAttr("{}.offset".format(sound_node_name), current_offset - current_source_start)
-                        playblast_kwargs["sound"] = sound_node_name
-
-                cmds.playblast(**playblast_kwargs)
-                saved_path = _locate_video_output(export_file_path)
+            cmds.playblast(**playblast_kwargs)
+            saved_path = _locate_video_output(export_file_path)
         finally:
-            _restore_gate_and_resolution_display(gate_display_state)
+            _restore_gate_display(gate_display_state)
 
         print("[UkorePlayblast] Playblast saved: {}".format(saved_path))
         message = "<hl>Playblast saved:</hl> {}".format(saved_path)

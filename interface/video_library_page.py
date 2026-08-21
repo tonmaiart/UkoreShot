@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -241,6 +242,11 @@ class UkoreShotPage(QWidget):
         # CommentEditor (2026-08-21, per the user's own request; see
         # _on_show_comment_toggle/_refresh_frame_strokes below).
         self.show_comment_toggle_button: QPushButton = find(QPushButton, "pushButton_show_comment_toggle")
+        # "Current Keyframe Comment" box — always shows whichever comment
+        # text is saved on the frame currently on screen, independent of
+        # pushButton_show_comment_toggle (that one only governs the drawing
+        # overlay). See _refresh_comment_text below.
+        self.comment_text_edit: QPlainTextEdit = find(QPlainTextEdit, "plainTextEdit_comment")
         # Generic busy indicator, added 2026-08-21 — shown/hidden around
         # every long-running operation this page runs (sequence extraction,
         # Get Video/Commented, Mark as Share upload, pull-by-code, ffmpeg
@@ -271,6 +277,7 @@ class UkoreShotPage(QWidget):
             ("comboBox_speed", self.speed_combo),
             ("lineEdit_keyframe", self.keyframe_edit),
             ("pushButton_show_comment_toggle", self.show_comment_toggle_button),
+            ("plainTextEdit_comment", self.comment_text_edit),
             ("widget_status_loading", self.status_widget),
             ("label_loading", self.status_label),
             ("progressBar", self.status_progress),
@@ -432,6 +439,7 @@ class UkoreShotPage(QWidget):
         # same as comment_editor.py's own lineEdit_keyframe.
         self.keyframe_edit.setText(str(frame_index))
         self._refresh_frame_strokes()
+        self._refresh_comment_text()
 
     # -- show comment overlay (pushButton_show_comment_toggle) --------------
 
@@ -457,6 +465,21 @@ class UkoreShotPage(QWidget):
             return
         data = self._current_entry_frames.get(str(self._current_frame_index), {})
         self.player_widget.set_frame_strokes([Stroke.from_dict(s) for s in data.get("strokes", [])])
+
+    def _refresh_comment_text(self) -> None:
+        """Fills plainTextEdit_comment with whichever text comment(s) are
+        saved on the frame currently on screen — reads from the same cached
+        self._current_entry_frames _refresh_frame_strokes uses, so this
+        stays cheap called on every frame tick during playback too. Always
+        kept up to date regardless of pushButton_show_comment_toggle (that
+        one only governs the drawing overlay, not this box). A frame with
+        multiple comments (Facebook-style, see comment_store.py) shows each
+        on its own line, blank when there's none."""
+        if self.comment_text_edit is None:
+            return
+        data = self._current_entry_frames.get(str(self._current_frame_index), {})
+        comments = data.get("comments", [])
+        self.comment_text_edit.setPlainText("\n".join(c.get("text", "") for c in comments if c.get("text")))
 
     # -- busy status (widget_status_loading) ---------------------------------
 
@@ -726,6 +749,7 @@ class UkoreShotPage(QWidget):
             self.player_widget.set_comment_frames([])
             self._current_entry_frames = {}
             self._refresh_frame_strokes()
+            self._refresh_comment_text()
             return
         if entry.video_path is not None:
             self.player_widget.load_video(entry.video_path)
@@ -740,6 +764,7 @@ class UkoreShotPage(QWidget):
         # comment_toggle's _on_show_comment_toggle.
         self._current_entry_frames = comment_store.load(entry.sequence_dir)["frames"]
         self._refresh_frame_strokes()
+        self._refresh_comment_text()
 
     def _update_empty_state(self) -> None:
         # No dedicated empty-state widget in the new .ui (unlike the old

@@ -101,7 +101,7 @@ def generate_share_code(shot_code: str, version: int) -> str:
     Mark as Share and persisted via set_share_state(code=...); never
     regenerated on a later re-share of the same video. uuid.uuid4().hex[:4]
     is the same "short random suffix" convention already used elsewhere in
-    this codebase (comment ids, options_store.py's variation sanitizing).
+    this codebase (comment ids).
 
     "UKSHOT_" prefix added 2026-08-21, per the user's own request, to make
     a pasted code unambiguously recognizable as one of this plugin's own
