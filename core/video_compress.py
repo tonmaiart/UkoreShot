@@ -230,9 +230,11 @@ def burn_frame_numbers(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Pa
     technique, without needing a separate per-frame Qt compositing pass
     the way Get Video - Commented's already frame-by-frame pipeline uses
     instead — see video_library_page.py's _render_commented_video for
-    that one). "%{n}" is drawtext's own current-output-frame-number
-    expression, 0-based, matching every other "frame index" already used
-    throughout this codebase.
+    that one). "%{frame_num}" is drawtext's own current-output-frame-number
+    expansion keyword, 0-based, matching every other "frame index" already
+    used throughout this codebase — not "%{n}" (fixed 2026-08-21 after a
+    real "Error parsing a filter description" failure: "n" isn't a
+    documented drawtext expansion function, "frame_num" is).
 
     Also applies the same duration-based target bitrate compress_to_fit
     uses (_calculate_video_bitrate), in this same ffmpeg call, instead of
@@ -254,7 +256,7 @@ def burn_frame_numbers(ffmpeg_path: str, video_path: Path, max_bytes: int) -> Pa
     video_bitrate = _calculate_video_bitrate(video_path, max_bytes, duration)
 
     drawtext = (
-        "drawtext=fontfile={}:text='%{{n}}':fontcolor=white:fontsize=48:"
+        "drawtext=fontfile={}:text='%{{frame_num}}':fontcolor=white:fontsize=48:"
         "bordercolor=black:borderw=5:x=(w-text_w)/2:y=20"
     ).format(_escape_ffmpeg_filter_path(_FRAME_NUMBER_FONT_PATH))
     output_path = Path(tempfile.mkdtemp(prefix="ukorehub_framenum_")) / f"{video_path.stem}_framenum.mp4"

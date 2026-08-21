@@ -82,7 +82,15 @@ further detail):
   first existing comment if it has one, else composes a new one). Both
   buttons went back to plain, icon-less buttons the same day, using
   `CommentEditor.ui`'s own original labels ("Clean Draw"/"Edit Message")
-  instead of `_set_button_icon`'s usual icon-only look.
+  instead of `_set_button_icon`'s usual icon-only look. Edit Message opens
+  `_EditCommentDialog` (own class in comment_editor.py) instead of the old
+  single-line `QInputDialog.getText` — a `QPlainTextEdit` so a long
+  comment wraps instead of scrolling sideways, Enter inserts a newline
+  instead of submitting, and a "Clear Message" button empties the field
+  without closing the dialog. `tableWidget_comment`'s Comment column wraps
+  long text onto multiple lines too (`setWordWrap(True)` +
+  `resizeRowsToContents()` after every `_refresh_table()` repopulation)
+  instead of clipping it to one line.
   `player_widget.py`'s `PlayerWidget` plays either a real video file
   (`QMediaPlayer`) or an already-extracted image sequence
   (`sequence_player.py`'s `SequencePlayer`, frame-accurate, used by

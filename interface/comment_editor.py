@@ -72,8 +72,9 @@ dialog, unlike clicking pushButton_save_comment itself — see
 
 **tableWidget_comment (renamed from tableWidget) is read-only, same
 day**: editing now goes through the new pushButton_edit_message
-(`_on_edit_message_clicked`, a QInputDialog) instead of in-cell double-
-click editing — `_apply_comment_text` is the shared add-or-edit logic
+(`_on_edit_message_clicked`, `_EditCommentDialog` — a multi-line
+QPlainTextEdit dialog, see that class's own docstring) instead of in-cell
+double-click editing — `_apply_comment_text` is the shared add-or-edit logic
 both that and the old inline-editing code path used."""
 
 from __future__ import annotations
@@ -93,9 +94,10 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QGroupBox,
     QHeaderView,
-    QInputDialog,
+    QLabel,
     QLineEdit,
     QMenu,
     QMessageBox,
@@ -153,6 +155,46 @@ def _active_frame_dot_icon() -> QIcon:
         painter.end()
         _active_frame_icon = QIcon(pixmap)
     return _active_frame_icon
+
+
+class _EditCommentDialog(QDialog):
+    """Multi-line replacement for the old QInputDialog.getText (2026-08-21,
+    per the user's own request) — a QPlainTextEdit instead of a
+    single-line QLineEdit, so a long comment wraps onto multiple lines
+    instead of scrolling sideways/getting cut off, and Enter inserts a
+    newline instead of submitting the dialog — only clicking OK (or its
+    default-button Enter-from-elsewhere-in-the-dialog activation) submits.
+    Also adds a "Clear Message" button — QDialogButtonBox has no stock
+    equivalent — that empties the field without closing the dialog, for
+    starting over without manually selecting-all-and-deleting."""
+
+    def __init__(self, parent, title: str, label: str, text: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(480, 320)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(label))
+        self.text_edit = QPlainTextEdit(text)
+        layout.addWidget(self.text_edit, stretch=1)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        clear_button = buttons.addButton("Clear Message", QDialogButtonBox.ActionRole)
+        clear_button.clicked.connect(self.text_edit.clear)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.text_edit.setFocus()
+        cursor = self.text_edit.textCursor()
+        cursor.movePosition(cursor.End)
+        self.text_edit.setTextCursor(cursor)
+
+    def text(self) -> str:
+        return self.text_edit.toPlainText()
+
+
+def _get_multiline_text(parent, title: str, label: str, text: str = "") -> tuple[str, bool]:
+    dialog = _EditCommentDialog(parent, title, label, text)
+    ok = dialog.exec() == QDialog.Accepted
+    return dialog.text(), ok
 
 
 class CommentEditor(QDialog):
@@ -323,7 +365,7 @@ class CommentEditor(QDialog):
         # Ctrl+Z/Ctrl+Shift+Z — moved here from player_widget.py 2026-08-21
         # (see that file's own note) now that undo/redo is a dialog-level,
         # cross-frame concept. _is_typing()-guarded so undoing/redoing while
-        # editing the keyframe box or a QInputDialog text field (via
+        # editing the keyframe box or _EditCommentDialog's text field (via
         # pushButton_edit_message) doesn't hijack that field's own native
         # text-undo instead. Default Qt.WindowShortcut context.
         self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
@@ -369,6 +411,12 @@ class CommentEditor(QDialog):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        # A long comment wraps onto multiple lines instead of getting cut
+        # off (2026-08-21, per the user's own request) — wordWrap alone
+        # only wraps the text within a cell's existing height, so
+        # _refresh_table also calls resizeRowsToContents() after every
+        # repopulation to actually grow each row tall enough to show it.
+        self.table.setWordWrap(True)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         self.table.itemSelectionChanged.connect(self._on_table_row_selected)
@@ -446,7 +494,7 @@ class CommentEditor(QDialog):
 
     def _is_typing(self) -> bool:
         """Guards Ctrl+Z/Ctrl+Shift+Z from hijacking native text-undo in a
-        focused text field (the keyframe box, or the QInputDialog
+        focused text field (the keyframe box, or the _EditCommentDialog
         pushButton_edit_message opens) — same pattern player_widget.py's
         own (now-removed) version used."""
         focus_widget = QApplication.focusWidget()
@@ -576,6 +624,9 @@ class CommentEditor(QDialog):
         self.table.setRowCount(len(rows))
         for row, (frame_index, comment) in enumerate(rows):
             self._set_row(row, frame_index, comment)
+        # Grows each row tall enough to show its own wrapped comment text
+        # in full (see setWordWrap(True) above) instead of clipping it.
+        self.table.resizeRowsToContents()
         self._suppress_selection_jump = False
 
         # Keeps the scrubber's own red comment-frame marks in sync with
@@ -679,7 +730,7 @@ class CommentEditor(QDialog):
         comments = self._frames.get(str(frame_index), {}).get("comments", [])
         comment_id = comments[0].get("id") if comments else None
         current_text = comments[0].get("text", "") if comments else ""
-        text, ok = QInputDialog.getText(self, "Edit Comment", "Comment:", text=current_text)
+        text, ok = _get_multiline_text(self, "Edit Comment", "Comment:", current_text)
         if not ok:
             return
         self._apply_comment_text(frame_index, comment_id, text.strip())

@@ -39,3 +39,17 @@ place even though the visual marks looked wrong. Fixed by converting
 frames to milliseconds (`round(f / self._fps() * 1000)`) in
 `set_comment_frames` whenever `self._mode == "video"`, same fps basis
 `_on_duration_changed`/`_on_position_changed` already use.
+
+## 2026-08-21 — Get Video failed outright with "Error parsing a filter description"
+
+`core/video_compress.py`'s `burn_frame_numbers` built its `drawtext`
+filter's frame-number text as `text='%{n}'` — `n` is not actually a
+documented drawtext expansion keyword (the correct one is `frame_num`),
+so ffmpeg failed to parse the filtergraph at all and Get Video errored
+out every time with "Error parsing a filter description" /
+"Error opening output files: Invalid argument". Get Video - Commented was
+never affected — it burns the frame number via `player_widget.py`'s
+`paint_frame_number` (plain QPainter text, composited per-frame in Python,
+not ffmpeg `drawtext` at all — see `video_library_page.py`'s
+`_render_commented_video`). Fixed by using `%{frame_num}` instead of
+`%{n}`.
