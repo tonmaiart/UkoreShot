@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1028</width>
+    <width>1264</width>
     <height>798</height>
    </rect>
   </property>
@@ -111,19 +111,6 @@
                     <string/>
                    </property>
                   </widget>
-                 </item>
-                 <item>
-                  <spacer name="horizontalSpacer_8">
-                   <property name="orientation">
-                    <enum>Qt::Horizontal</enum>
-                   </property>
-                   <property name="sizeHint" stdset="0">
-                    <size>
-                     <width>40</width>
-                     <height>20</height>
-                    </size>
-                   </property>
-                  </spacer>
                  </item>
                  <item>
                   <spacer name="horizontalSpacer_3">
@@ -267,7 +254,7 @@
             </property>
             <layout class="QGridLayout" name="gridLayout">
              <item row="0" column="0">
-              <widget class="QTableWidget" name="tableWidget">
+              <widget class="QTableWidget" name="tableWidget_comment">
                <property name="showGrid">
                 <bool>false</bool>
                </property>
@@ -282,85 +269,86 @@
                </attribute>
               </widget>
              </item>
-             <item row="1" column="0">
+             <item row="2" column="0">
               <widget class="QTextBrowser" name="textBrowser">
                <property name="html">
                 <string>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
 &lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'MS Shell Dlg 2'; font-size:8.25pt; font-weight:400; font-style:normal;&quot; bgcolor=&quot;#1e1e24&quot;&gt;
-&lt;table border=&quot;0&quot; style=&quot; margin-top:0px; margin-bottom:12px; margin-left:5px; margin-right:5px;&quot; width=&quot;100%&quot; cellspacing=&quot;0&quot; cellpadding=&quot;6&quot; bgcolor=&quot;#2b2d42&quot;&gt;
-&lt;tr&gt;
-&lt;td colspan=&quot;2&quot; bgcolor=&quot;#353853&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4; background-color:#353853;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; font-weight:600; color:#ff70a6;&quot;&gt; Drawing Brush&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td width=&quot;55%&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Left Click &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
-&lt;td width=&quot;45%&quot;&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Draw Brush                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:6px; margin-bottom:2px; margin-left:6px; margin-right:6px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:11pt; font-weight:600; color:#ff70a6;&quot;&gt;    ● Drawing Brush&lt;/span&gt;&lt;/p&gt;
+&lt;table border=&quot;0&quot; style=&quot; margin-top:0px; margin-bottom:8px; margin-left:14px; margin-right:6px;&quot; cellspacing=&quot;0&quot; cellpadding=&quot;2&quot;&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Right Click &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Left Click &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Draw Eraser                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Draw Brush    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Middle Click &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Right Click &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Change Brush Color                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Draw Eraser    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Scroll Middle Mouse &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Middle Click &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Adjust Brush Size            &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;table border=&quot;0&quot; style=&quot; margin-top:0px; margin-bottom:12px; margin-left:5px; margin-right:5px;&quot; width=&quot;100%&quot; cellspacing=&quot;0&quot; cellpadding=&quot;6&quot; bgcolor=&quot;#2b2d42&quot;&gt;
-&lt;tr&gt;
-&lt;td colspan=&quot;2&quot; bgcolor=&quot;#353853&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4; background-color:#353853;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; font-weight:600; color:#70d6ff;&quot;&gt; Timeline&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td width=&quot;55%&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; Spacebar &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
-&lt;td width=&quot;45%&quot;&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Play / Stop                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Change Color    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; A &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#ff9ebb; background-color:#4a283b;&quot;&gt; Scroll Mid &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Previous Frame                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Adjust Size&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;p style=&quot; margin-top:8px; margin-bottom:2px; margin-left:6px; margin-right:6px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:11pt; font-weight:600; color:#70d6ff;&quot;&gt;    ● Timeline&lt;/span&gt;&lt;/p&gt;
+&lt;table border=&quot;0&quot; style=&quot; margin-top:0px; margin-bottom:8px; margin-left:14px; margin-right:6px;&quot; cellspacing=&quot;0&quot; cellpadding=&quot;2&quot;&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; D &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; Spacebar &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Next Frame                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Play / Stop    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; Shift &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#8d99ae;&quot;&gt;+&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; A &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; A &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Previous Comment                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Prev Frame    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; Shift &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#8d99ae;&quot;&gt;+&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; D &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; D &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Next Comment            &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
-&lt;table border=&quot;0&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:5px; margin-right:5px;&quot; width=&quot;100%&quot; cellspacing=&quot;0&quot; cellpadding=&quot;6&quot; bgcolor=&quot;#2b2d42&quot;&gt;
-&lt;tr&gt;
-&lt;td colspan=&quot;2&quot; bgcolor=&quot;#353853&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4; background-color:#353853;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; font-weight:600; color:#ffd670;&quot;&gt; System&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;
-&lt;td width=&quot;55%&quot;&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Ctrl &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#8d99ae;&quot;&gt;+&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; S &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
-&lt;td width=&quot;45%&quot;&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Save                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Next Frame    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Ctrl &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#8d99ae;&quot;&gt;+&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Z &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; Shift+A &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Undo                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Prev Comment    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;
 &lt;td&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Ctrl &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#8d99ae;&quot;&gt;+&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Shift &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#8d99ae;&quot;&gt;+&lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:9pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Z &lt;/span&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;                &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#9fe3ff; background-color:#1c3b4a;&quot;&gt; Shift+D &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
 &lt;td&gt;
-&lt;p align=&quot;right&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; color:#edf2f4;&quot;&gt;            Redo            &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&lt;/body&gt;&lt;/html&gt;</string>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Next Comment&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;p style=&quot; margin-top:8px; margin-bottom:2px; margin-left:6px; margin-right:6px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:11pt; font-weight:600; color:#ffd670;&quot;&gt;    ● System&lt;/span&gt;&lt;/p&gt;
+&lt;table border=&quot;0&quot; style=&quot; margin-top:0px; margin-bottom:0px; margin-left:14px; margin-right:6px;&quot; cellspacing=&quot;0&quot; cellpadding=&quot;2&quot;&gt;
+&lt;tr&gt;
+&lt;td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Ctrl+S &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Save    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Ctrl+Z &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Undo    &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;
+&lt;td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10pt; font-weight:600; color:#ffe49e; background-color:#4a3e1c;&quot;&gt; Ctrl+Shift+Z &lt;/span&gt;&lt;/p&gt;&lt;/td&gt;
+&lt;td&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:'Segoe UI,sans-serif'; font-size:10.5pt; color:#edf2f4;&quot;&gt; Redo&lt;/span&gt;&lt;/p&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&lt;/body&gt;&lt;/html&gt;</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QPushButton" name="pushButton_edit_message">
+               <property name="text">
+                <string>PushButton</string>
                </property>
               </widget>
              </item>
@@ -377,6 +365,12 @@ p, li { white-space: pre-wrap; }
    <item row="1" column="0">
     <widget class="QWidget" name="widget_2" native="true">
      <layout class="QGridLayout" name="gridLayout_3">
+      <property name="topMargin">
+       <number>20</number>
+      </property>
+      <property name="bottomMargin">
+       <number>20</number>
+      </property>
       <item row="0" column="4">
        <spacer name="horizontalSpacer_7">
         <property name="orientation">
@@ -394,19 +388,19 @@ p, li { white-space: pre-wrap; }
        <widget class="QPushButton" name="pushButton_save_comment">
         <property name="minimumSize">
          <size>
-          <width>40</width>
-          <height>30</height>
+          <width>100</width>
+          <height>40</height>
          </size>
         </property>
         <property name="font">
          <font>
-          <pointsize>10</pointsize>
+          <pointsize>12</pointsize>
           <weight>75</weight>
           <bold>true</bold>
          </font>
         </property>
         <property name="text">
-         <string>Save (Ctrl+S)</string>
+         <string>Save and Close</string>
         </property>
        </widget>
       </item>
@@ -423,17 +417,17 @@ p, li { white-space: pre-wrap; }
         </property>
        </spacer>
       </item>
-      <item row="0" column="0">
+      <item row="0" column="2">
        <widget class="QPushButton" name="pushButton_2">
         <property name="minimumSize">
          <size>
-          <width>40</width>
-          <height>30</height>
+          <width>100</width>
+          <height>40</height>
          </size>
         </property>
         <property name="font">
          <font>
-          <pointsize>10</pointsize>
+          <pointsize>12</pointsize>
           <weight>75</weight>
           <bold>true</bold>
          </font>

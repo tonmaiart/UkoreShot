@@ -79,8 +79,9 @@ class _VideoSurface(QWidget):
 
 
 class _FrameNumberOverlay(QWidget):
-    """Always-on-top-right HUD showing the current frame number — white
-    fill, black stroke, large bold text, per the user's own spec.
+    """Always-on-top HUD showing the current frame number — white fill,
+    black stroke, large bold text, per the user's own spec. Horizontally
+    centered (changed 2026-08-21, was right-aligned), still top-anchored.
     WA_TransparentForMouseEvents so it never intercepts clicks meant for
     anything beneath it (the exact class of bug
     developer/bug-history/2026-07-20-draw-overlay-native-video-widget.md and
@@ -99,7 +100,7 @@ class _FrameNumberOverlay(QWidget):
     black only ever shows through around the true glyph's outside edge."""
 
     _MARGIN = 12
-    _STROKE_WIDTH = 3
+    _STROKE_WIDTH = 5
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -122,7 +123,9 @@ class _FrameNumberOverlay(QWidget):
         if not self._text:
             return
         metrics = QFontMetrics(self._font)
-        x = self.width() - metrics.horizontalAdvance(self._text) - self._MARGIN
+        # Horizontally centered (was right-aligned) per the user's own
+        # request 2026-08-21 — still top-anchored via _MARGIN.
+        x = (self.width() - metrics.horizontalAdvance(self._text)) // 2
         y = self._MARGIN + metrics.ascent()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -374,27 +377,15 @@ class PlayerWidget(QWidget):
         # remaining trigger and is effectively unreachable now, same as this
         # class's own removed toolbar. undo/redo/Clear moved to
         # CommentEditor.ui's own pushButton_undo/redo/clear_frame earlier the
-        # same day, wired straight to draw_overlay there too.
-        if show_edit_tools:
-            # Ctrl+Z / Ctrl+Shift+Z, added 2026-08-21 per the user's own
-            # request. Ctrl+Shift+Z specifically (not QKeySequence.Redo,
-            # which is Ctrl+Y on Windows) since that's the exact binding
-            # asked for. _is_typing()-guarded the same way the frame-step/
-            # play shortcuts below already are, so redoing while editing a
-            # keyframe comment table cell doesn't hijack that field's own
-            # native text-undo instead. Default Qt.WindowShortcut context
-            # (no explicit setContext) — fixed 2026-08-21 after a real "the
-            # shortcut doesn't work" report: WidgetWithChildrenShortcut only
-            # fires while a descendant of this widget literally holds
-            # keyboard focus, and DrawOverlay never grabs focus on a plain
-            # click, so after drawing a stroke there was nothing in this
-            # widget's subtree to activate against. WindowShortcut instead
-            # fires whenever this widget's top-level window (CommentEditor)
-            # is the active window, regardless of which child has focus.
-            self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-            self._undo_shortcut.activated.connect(self._undo_if_not_typing)
-            self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
-            self._redo_shortcut.activated.connect(self._redo_if_not_typing)
+        # same day, wired straight to draw_overlay there too. Ctrl+Z/
+        # Ctrl+Shift+Z moved out of this class entirely 2026-08-21 (used to
+        # live here, calling draw_overlay.undo/redo, which only ever tracked
+        # the *current* frame's own strokes) — undo/redo is now a
+        # CommentEditor-level, cross-frame concept spanning strokes *and*
+        # comment edits, with each step jumping the player back to whichever
+        # frame it happened on, so it belongs to CommentEditor's own action
+        # history instead of this per-frame drawing canvas. See
+        # comment_editor.py's _on_undo/_on_redo/_push_undo_snapshot.
 
         # "A"/"D" step one frame back/forward, "Space" toggles play/pause —
         # skipped while a text field has focus (goto_frame_spin's internal
@@ -402,10 +393,9 @@ class PlayerWidget(QWidget):
         # doesn't hijack the cursor instead. Comment-jump ("Shift+A"/
         # "Shift+D") lives in comment_editor.py instead (this widget has no
         # keyframe table to jump between). Default Qt.WindowShortcut context
-        # (see the undo/redo shortcuts' own note above) — only the old
-        # "1"-"4" tool-switch shortcuts are still gone, since brush/eraser/
-        # text are no longer separate selectable tools at all (see
-        # DrawOverlay's own docstring).
+        # — only the old "1"-"4" tool-switch shortcuts are still gone, since
+        # brush/eraser/text are no longer separate selectable tools at all
+        # (see DrawOverlay's own docstring).
         self._prev_frame_shortcut = QShortcut(QKeySequence(Qt.Key_A), self)
         self._prev_frame_shortcut.activated.connect(lambda: self._step_frame_if_not_typing(-1))
         self._next_frame_shortcut = QShortcut(QKeySequence(Qt.Key_D), self)
@@ -614,14 +604,6 @@ class PlayerWidget(QWidget):
     def _toggle_play_if_not_typing(self) -> None:
         if not self._is_typing():
             self._on_play_clicked()
-
-    def _undo_if_not_typing(self) -> None:
-        if not self._is_typing():
-            self.draw_overlay.undo()
-
-    def _redo_if_not_typing(self) -> None:
-        if not self._is_typing():
-            self.draw_overlay.redo()
 
     # -- misc ---------------------------------------------------------
 

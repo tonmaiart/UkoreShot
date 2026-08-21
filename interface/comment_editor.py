@@ -52,11 +52,34 @@ draw_overlay.colorPickRequested for the existing middle-click-on-canvas
 gesture). comboBox_speed (0.25x-1.00x) and lineEdit_keyframe (kept in
 sync with the player, not just editable) replace player_widget.py's own
 speed_slider/goto_frame_spin here too — PlayerWidget is now constructed
-with own_transport_controls=False for exactly this reason."""
+with own_transport_controls=False for exactly this reason.
+
+**Undo/redo is now a dialog-level, cross-frame action history (2026-08-21,
+per the user's own request)** — not DrawOverlay's own per-frame stroke
+undo anymore (that only ever tracked the *current* frame, reset on every
+frame switch). `self._undo_stack`/`_redo_stack` hold `(frame_index,
+pre-mutation snapshot)` pairs, pushed from the single point every draw/
+erase/comment edit already funnels through (`_record_frame_change` —
+see `_push_undo_snapshot`'s own docstring for why that one call site
+covers exactly draw/erase/comment and nothing else). Undoing/redoing
+restores the snapshot *and* jumps the player back to whichever frame the
+action happened on (`_on_undo`/`_on_redo`/`_apply_frame_snapshot`).
+Ctrl+Z/Ctrl+Shift+Z moved here from player_widget.py for the same reason.
+
+**Ctrl+S added the same day**: a quick save that does *not* close the
+dialog, unlike clicking pushButton_save_comment itself — see
+`_save_comments(close_after=...)`, which both now share.
+
+**tableWidget_comment (renamed from tableWidget) is read-only, same
+day**: editing now goes through the new pushButton_edit_message
+(`_on_edit_message_clicked`, a QInputDialog) instead of in-cell double-
+click editing — `_apply_comment_text` is the shared add-or-edit logic
+both that and the old inline-editing code path used."""
 
 from __future__ import annotations
 
 import bisect
+import copy
 import datetime
 import logging
 import uuid
@@ -67,17 +90,21 @@ from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShort
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QColorDialog,
     QComboBox,
     QDialog,
     QGroupBox,
     QHeaderView,
+    QInputDialog,
     QLineEdit,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
 )
 
@@ -92,6 +119,7 @@ _UI_FILE = Path(__file__).resolve().parent / "CommentEditor.ui"
 _COL_ACTIVE, _COL_FRAME, _COL_COMMENT = range(3)
 _FRAME_COLUMN_WIDTH_FRACTION = 0.10
 _ACTIVE_COLUMN_WIDTH = 28
+_UNDO_STACK_LIMIT = 20
 
 # This plugin's own images/ folder — see player_widget.py's own _ICONS_DIR
 # note for why (not the shared data/icons/ every other plugin uses).
@@ -105,6 +133,7 @@ _NEXT_COMMENT_ICON_PATH = _ICONS_DIR / "next_comment.png"
 _UNDO_ICON_PATH = _ICONS_DIR / "undo.png"
 _REDO_ICON_PATH = _ICONS_DIR / "redo.png"
 _CLEAR_FRAME_ICON_PATH = _ICONS_DIR / "clear_frame.png"
+_EDIT_MESSAGE_ICON_PATH = _ICONS_DIR / "icons8-edit-50.png"
 
 _active_frame_icon: QIcon | None = None
 
@@ -156,6 +185,16 @@ class CommentEditor(QDialog):
         self._sync_worker: CommentSyncWorker | None = None
         self._current_frame_index = 0
         self._suppress_selection_jump = False
+        # Global, cross-frame undo/redo — added 2026-08-21 per the user's
+        # own request: each entry is (frame_index, pre-mutation snapshot of
+        # self._frames[frame_index]), pushed once per draw/erase/comment
+        # edit (see _push_undo_snapshot's own docstring for why
+        # _record_frame_change is the one call site). Undoing/redoing
+        # restores that snapshot and jumps the player back to frame_index —
+        # a real behavior change from DrawOverlay's own former per-frame-
+        # only undo stack, which never persisted across a frame switch.
+        self._undo_stack: list[tuple[int, dict]] = []
+        self._redo_stack: list[tuple[int, dict]] = []
 
         data = comment_store.load(sequence_dir)
         # Working copy only — never written back except by Save (see the
@@ -178,7 +217,10 @@ class CommentEditor(QDialog):
         find = self.ui.findChild
         self.viewer_group: QGroupBox = find(QGroupBox, "groupBox_playblast_viewer")
         self.comment_group: QGroupBox = find(QGroupBox, "groupBox")
-        self.table: QTableWidget = find(QTableWidget, "tableWidget")
+        # Renamed from "tableWidget" to "tableWidget_comment" in the .ui
+        # 2026-08-21 (the user's own change, to avoid confusion with other
+        # tables elsewhere in the app) — findChild by the new name.
+        self.table: QTableWidget = find(QTableWidget, "tableWidget_comment")
         self.save_button: QPushButton = find(QPushButton, "pushButton_save_comment")
         # objectName is "pushButton_2" in CommentEditor.ui, not
         # "pushButton_cancel_comment" — a Qt Designer auto-generated name
@@ -199,12 +241,16 @@ class CommentEditor(QDialog):
         self.brush_color_button: QPushButton = find(QPushButton, "pushButton_brush_color")
         self.speed_combo: QComboBox = find(QComboBox, "comboBox_speed")
         self.keyframe_edit: QLineEdit = find(QLineEdit, "lineEdit_keyframe")
+        # Added 2026-08-21 alongside the table rename — the table is now
+        # read-only (see below); this is the only way to add/edit a
+        # comment's text.
+        self.edit_message_button: QPushButton = find(QPushButton, "pushButton_edit_message")
         self.viewer_player_layout: QVBoxLayout = find(QVBoxLayout, "verticalLayout_player")
 
         for _name, _widget in [
             ("groupBox_playblast_viewer", self.viewer_group),
             ("groupBox", self.comment_group),
-            ("tableWidget", self.table),
+            ("tableWidget_comment", self.table),
             ("pushButton_save_comment", self.save_button),
             ("pushButton_2", self.cancel_button),
             ("pushButton_previous_frame", self.prev_frame_button),
@@ -218,6 +264,7 @@ class CommentEditor(QDialog):
             ("pushButton_brush_color", self.brush_color_button),
             ("comboBox_speed", self.speed_combo),
             ("lineEdit_keyframe", self.keyframe_edit),
+            ("pushButton_edit_message", self.edit_message_button),
             ("verticalLayout_player", self.viewer_player_layout),
         ]:
             if _widget is None:
@@ -249,18 +296,40 @@ class CommentEditor(QDialog):
         PlayerWidget._set_button_icon(self.undo_button, _UNDO_ICON_PATH, "Undo")
         PlayerWidget._set_button_icon(self.redo_button, _REDO_ICON_PATH, "Redo")
         PlayerWidget._set_button_icon(self.clear_button, _CLEAR_FRAME_ICON_PATH, "Clear")
+        PlayerWidget._set_button_icon(self.edit_message_button, _EDIT_MESSAGE_ICON_PATH, "Edit")
         self.prev_frame_button.clicked.connect(lambda: self.player_widget.step_frame(-1))
         self.play_button.clicked.connect(self.player_widget.toggle_play)
         self.next_frame_button.clicked.connect(lambda: self.player_widget.step_frame(1))
         self.prev_comment_button.clicked.connect(self._on_prev_comment_clicked)
         self.next_comment_button.clicked.connect(self._on_next_comment_clicked)
-        self.undo_button.clicked.connect(self.player_widget.draw_overlay.undo)
-        self.redo_button.clicked.connect(self.player_widget.draw_overlay.redo)
+        # undo/redo — 2026-08-21: no longer draw_overlay.undo/redo directly
+        # (that only ever tracked the *current* frame's own strokes); this
+        # dialog's own _on_undo/_on_redo below span every frame and both
+        # strokes and comments, see _push_undo_snapshot's docstring.
+        self.undo_button.clicked.connect(self._on_undo)
+        self.redo_button.clicked.connect(self._on_redo)
         self.clear_button.clicked.connect(self.player_widget.draw_overlay.clear_frame)
+        self.edit_message_button.clicked.connect(self._on_edit_message_clicked)
         self._prev_comment_shortcut = QShortcut(QKeySequence("Shift+A"), self)
         self._prev_comment_shortcut.activated.connect(self._on_prev_comment_clicked)
         self._next_comment_shortcut = QShortcut(QKeySequence("Shift+D"), self)
         self._next_comment_shortcut.activated.connect(self._on_next_comment_clicked)
+        # Ctrl+Z/Ctrl+Shift+Z — moved here from player_widget.py 2026-08-21
+        # (see that file's own note) now that undo/redo is a dialog-level,
+        # cross-frame concept. _is_typing()-guarded so undoing/redoing while
+        # editing the keyframe box or a QInputDialog text field (via
+        # pushButton_edit_message) doesn't hijack that field's own native
+        # text-undo instead. Default Qt.WindowShortcut context.
+        self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self._undo_shortcut.activated.connect(self._on_undo)
+        self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
+        self._redo_shortcut.activated.connect(self._on_redo)
+        # Ctrl+S — added 2026-08-21 per the user's own request: a quick save
+        # that does NOT close the dialog (unlike clicking Save/pushButton_
+        # save_comment, or pressing Enter in a field that happens to submit
+        # it) — see _save_comments(close_after=...).
+        self._save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        self._save_shortcut.activated.connect(self._on_save_shortcut)
 
         # Brush color — moved here from player_widget.py's own now-removed
         # code-built color swatch (2026-08-21 per the user's own request):
@@ -288,14 +357,15 @@ class CommentEditor(QDialog):
 
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["", "Frame", "Comment"])
-        self.table.setEditTriggers(QTableWidget.DoubleClicked)
+        # Read-only 2026-08-21 (was DoubleClicked-to-edit) — editing now
+        # goes through pushButton_edit_message/_on_edit_message_clicked
+        # instead, per the user's own request.
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
-        self.table.itemChanged.connect(self._on_table_item_changed)
         self.table.itemSelectionChanged.connect(self._on_table_row_selected)
-        self._suppress_item_changed = False
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(_COL_ACTIVE, QHeaderView.Fixed)
@@ -359,6 +429,56 @@ class CommentEditor(QDialog):
             return
         self.player_widget.jump_to_frame(frame_index)
 
+    # -- undo/redo (global, cross-frame — see __init__'s own note) ----------
+
+    def _is_typing(self) -> bool:
+        """Guards Ctrl+Z/Ctrl+Shift+Z from hijacking native text-undo in a
+        focused text field (the keyframe box, or the QInputDialog
+        pushButton_edit_message opens) — same pattern player_widget.py's
+        own (now-removed) version used."""
+        focus_widget = QApplication.focusWidget()
+        return isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit))
+
+    def _push_undo_snapshot(self, frame_index: int) -> None:
+        """Records frame_index's state right before a mutation, so
+        Undo/Redo can restore it and jump the player back there — the
+        single call site is _record_frame_change, which both stroke
+        changes (draw/erase/clear) and comment changes (add/edit/delete)
+        already funnel through, so this covers exactly those three action
+        types without needing to distinguish them explicitly."""
+        key = str(frame_index)
+        self._undo_stack.append((frame_index, copy.deepcopy(self._frames.get(key, {}))))
+        if len(self._undo_stack) > _UNDO_STACK_LIMIT:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()  # a new action invalidates any redo history
+
+    def _apply_frame_snapshot(self, frame_index: int, snapshot: dict) -> None:
+        key = str(frame_index)
+        if snapshot:
+            self._frames[key] = snapshot
+        else:
+            self._frames.pop(key, None)
+        # jump_to_frame always re-emits frameIndexChanged (SequencePlayer.
+        # seek() doesn't skip a no-op seek to the same index), which drives
+        # _on_frame_index_changed to reload draw_overlay/the table from the
+        # snapshot just applied above — so no separate refresh is needed
+        # even when frame_index is already the frame on screen.
+        self.player_widget.jump_to_frame(frame_index)
+
+    def _on_undo(self) -> None:
+        if self._is_typing() or not self._undo_stack:
+            return
+        frame_index, snapshot = self._undo_stack.pop()
+        self._redo_stack.append((frame_index, copy.deepcopy(self._frames.get(str(frame_index), {}))))
+        self._apply_frame_snapshot(frame_index, snapshot)
+
+    def _on_redo(self) -> None:
+        if self._is_typing() or not self._redo_stack:
+            return
+        frame_index, snapshot = self._redo_stack.pop()
+        self._undo_stack.append((frame_index, copy.deepcopy(self._frames.get(str(frame_index), {}))))
+        self._apply_frame_snapshot(frame_index, snapshot)
+
     # -- frame navigation / drawing persistence (in-memory only) -----------
 
     def _on_frame_index_changed(self, frame_index: int) -> None:
@@ -373,6 +493,13 @@ class CommentEditor(QDialog):
         self._record_frame_change(self._current_frame_index, strokes=self.player_widget.draw_overlay.current_strokes())
 
     def _record_frame_change(self, frame_index: int, *, strokes=None, comments=None) -> None:
+        # The one mutation choke-point for both stroke changes (draw/erase/
+        # clear, via _on_strokes_changed) and comment changes (add/edit/
+        # delete, via _apply_comment_text/_on_table_context_menu) — pushing
+        # the undo snapshot here, before applying the incoming change,
+        # covers exactly the three action types the user asked undo/redo to
+        # "detect" (draw, erase, comment) and nothing else.
+        self._push_undo_snapshot(frame_index)
         key = str(frame_index)
         entry = dict(self._frames.get(key, {}))
         if strokes is not None:
@@ -445,12 +572,10 @@ class CommentEditor(QDialog):
         insert_at = bisect.bisect_right([r[0] for r in rows], self._current_frame_index)
         rows.insert(insert_at, (self._current_frame_index, None))
 
-        self._suppress_item_changed = True
         self._suppress_selection_jump = True
         self.table.setRowCount(len(rows))
         for row, (frame_index, comment) in enumerate(rows):
             self._set_row(row, frame_index, comment)
-        self._suppress_item_changed = False
         self._suppress_selection_jump = False
 
     def _set_row(self, row: int, frame_index: int, comment: dict | None) -> None:
@@ -501,19 +626,17 @@ class CommentEditor(QDialog):
         if later:
             self.player_widget.jump_to_frame(later[0])
 
-    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
-        if self._suppress_item_changed or item.column() != _COL_COMMENT:
-            return
-        text = item.text().strip()
-        comment_id = item.data(Qt.UserRole)
-        frame_index = item.data(Qt.UserRole + 1)
-        if frame_index is None:
-            frame_index = self._current_frame_index
-
+    def _apply_comment_text(self, frame_index: int, comment_id: str | None, text: str) -> None:
+        """Shared by _on_edit_message_clicked — comment_id=None means the
+        composer row (add a new comment to frame_index), otherwise edits
+        the existing comment with that id in place. Was previously inline
+        in _on_table_item_changed (removed 2026-08-21 along with the
+        table's own in-cell editing — see the table's setEditTriggers
+        note)."""
+        comments = list(self._frames.get(str(frame_index), {}).get("comments", []))
         if comment_id is None:
             if not text:
                 return
-            comments = list(self._frames.get(str(frame_index), {}).get("comments", []))
             comments.append(
                 {
                     "id": _new_comment_id(),
@@ -522,14 +645,33 @@ class CommentEditor(QDialog):
                     "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }
             )
-            self._record_frame_change(frame_index, comments=comments)
         else:
-            comments = list(self._frames.get(str(frame_index), {}).get("comments", []))
             for comment in comments:
                 if comment.get("id") == comment_id:
                     comment["text"] = text
                     break
-            self._record_frame_change(frame_index, comments=comments)
+        self._record_frame_change(frame_index, comments=comments)
+
+    def _on_edit_message_clicked(self) -> None:
+        """pushButton_edit_message — added 2026-08-21 alongside making
+        tableWidget_comment read-only: the only way to add/edit a
+        comment's text now, via a QInputDialog instead of in-cell editing.
+        Operates on whichever row is currently selected (the composer row
+        for the current frame, or an existing comment row)."""
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        item = self.table.item(row, _COL_COMMENT)
+        if item is None:
+            return
+        frame_index = item.data(Qt.UserRole + 1)
+        if frame_index is None:
+            frame_index = self._current_frame_index
+        comment_id = item.data(Qt.UserRole)
+        text, ok = QInputDialog.getText(self, "Edit Comment", "Comment:", text=item.text())
+        if not ok:
+            return
+        self._apply_comment_text(frame_index, comment_id, text.strip())
 
     def _on_table_context_menu(self, pos) -> None:
         item = self.table.itemAt(pos)
@@ -552,6 +694,15 @@ class CommentEditor(QDialog):
     # -- save / cancel --------------------------------------------------------
 
     def _on_save_clicked(self) -> None:
+        self._save_comments(close_after=True)
+
+    def _on_save_shortcut(self) -> None:
+        """Ctrl+S — added 2026-08-21 per the user's own request: saves
+        immediately without closing the dialog, unlike clicking
+        pushButton_save_comment itself (close_after=True there)."""
+        self._save_comments(close_after=False)
+
+    def _save_comments(self, *, close_after: bool) -> None:
         share_state = comment_store.get_share_state(self._sequence_dir)
         comment_store.save(self._sequence_dir, {"frames": self._frames, "share": share_state})
         _logger.info("saved comments.json for %s (%d frame(s))", self._sequence_dir, len(self._frames))
@@ -565,24 +716,29 @@ class CommentEditor(QDialog):
                 sequence_dir=self._sequence_dir,
                 parent=self,
             )
-            worker.succeeded.connect(self._on_comment_sync_finished)
-            worker.failed.connect(self._on_comment_sync_failed)
+            worker.succeeded.connect(lambda: self._on_comment_sync_finished(close_after))
+            worker.failed.connect(lambda message: self._on_comment_sync_failed(message, close_after))
             worker.finished.connect(worker.deleteLater)
             self._sync_worker = worker
             worker.start()
             return
-        self.accept()
+        if close_after:
+            self.accept()
 
-    def _on_comment_sync_finished(self) -> None:
+    def _on_comment_sync_finished(self, close_after: bool) -> None:
         self._sync_worker = None
+        self.save_button.setEnabled(True)
         _logger.info("comments.json cloud sync succeeded")
-        self.accept()
+        if close_after:
+            self.accept()
 
-    def _on_comment_sync_failed(self, message: str) -> None:
+    def _on_comment_sync_failed(self, message: str, close_after: bool) -> None:
         self._sync_worker = None
+        self.save_button.setEnabled(True)
         _logger.warning("comments.json cloud sync failed: %s", message)
         QMessageBox.warning(self, "Cloud Sync Failed", "Comments saved locally, but the cloud sync failed: " + message)
-        self.accept()
+        if close_after:
+            self.accept()
 
 
 def _new_comment_id() -> str:
