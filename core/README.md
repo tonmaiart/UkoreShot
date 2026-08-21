@@ -7,10 +7,14 @@ of `interface/`'s widget code (and vice versa) — see the top-level
 `../README.md`'s "Structure" section for the full rule.
 
 **Naming note:** `video_path_store.py`'s `from core.exceptions import
-NotFoundError`, `comment_store.py`'s `from core.store import
-LocalConfigStore`, and `share_sync.py`'s `from core.exceptions import
-ConflictError` all always mean the app's own **top-level** `core/` package
-(`C:\Tonmai\UkoreHub\core\`), never this folder — Python resolves
+NotFoundError` and `comment_store.py`'s `from core.store import
+LocalConfigStore` always mean the app's own **top-level** `core/` package
+(`C:\Tonmai\UkoreHub\core\`), never this folder — both are grandfathered
+direct imports from before this plugin went through `plugin_api` (see
+`plugin-api.md`'s "never `from core.xxx import yyy` in a plugin file, write
+`from plugin_api import yyy` instead"). `share_sync.py` (new code, no such
+history) correctly goes through the sanctioned `from plugin_api import
+ConflictError` instead — Python resolves
 `from core...` as an absolute import from the repo root on `sys.path`,
 completely independent of where the importing file itself lives. The two
 packages share a name by coincidence, not relationship; don't assume a

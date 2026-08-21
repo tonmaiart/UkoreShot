@@ -21,7 +21,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from core.exceptions import ConflictError
+# ConflictError via plugin_api (developer/app/docs/plugin-api.md's
+# "Exceptions" re-export row) — this file is new, unlike comment_store.py's/
+# draw_overlay.py's ported-from-history direct `core.*` imports (see those
+# files' own naming notes for why those specific ones are grandfathered),
+# so it has no reason to bypass the sanctioned plugin_api surface.
+from plugin_api import ConflictError
 from ukoreshot_plugin.core import comment_store
 
 _POINTER_PREFIX = "ukore_shot/share_codes"
