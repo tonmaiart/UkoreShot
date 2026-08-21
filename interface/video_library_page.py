@@ -33,7 +33,14 @@ from PySide6.QtWidgets import (
 
 from ukoreshot_plugin.core import comment_store, video_naming, video_path_store, video_sequence
 from ukoreshot_plugin.core.video_compress import VideoCompressionError, burn_frame_numbers, compress_to_fit, get_ffmpeg_path
-from ukoreshot_plugin.core.share_sync import PullByCodeWorker, ShareUploadWorker, generate_unique_share_code, push_pointer
+from ukoreshot_plugin.core.share_sync import (
+    PullByCodeWorker,
+    ShareUploadWorker,
+    SyncSharedCommentsWorker,
+    generate_unique_share_code,
+    pull_comments,
+    push_pointer,
+)
 from ukoreshot_plugin.interface.comment_editor import CommentEditor
 from ukoreshot_plugin.interface.draw_overlay import Stroke, paint_stroke_points
 from ukoreshot_plugin.interface.player_widget import PlayerWidget, paint_frame_number
@@ -191,6 +198,7 @@ class UkoreShotPage(QWidget):
         self._current_entry_frames: dict = {}
         self._share_worker: ShareUploadWorker | None = None
         self._pull_worker: PullByCodeWorker | None = None
+        self._comments_sync_worker: SyncSharedCommentsWorker | None = None
         self._thumbnail_loader = ThumbnailLoader(self)
         self._thumbnail_loader.thumbnailReady.connect(self._on_thumbnail_ready)
 
@@ -335,7 +343,7 @@ class UkoreShotPage(QWidget):
 
         self.search_edit.textChanged.connect(self._apply_filter)
         self.search_edit.returnPressed.connect(self._on_search_enter)
-        self.reload_button.clicked.connect(self._reload_videos)
+        self.reload_button.clicked.connect(self._reload_videos_and_sync)
         self.sort_ascending_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NAME_ASC))
         self.sort_newest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NEWEST))
         self.comment_button.clicked.connect(self._on_edit_comment_clicked)
@@ -365,7 +373,7 @@ class UkoreShotPage(QWidget):
         self._project_id = project.id if project is not None else None
         self._repo_id = repo.id if repo is not None else None
         _logger.info("set_repo(project_id=%s, repo_id=%s)", self._project_id, self._repo_id)
-        self._reload_videos()
+        self._reload_videos_and_sync()
 
     # -- transport row (own_transport_controls=False) -----------------------
 
@@ -553,6 +561,50 @@ class UkoreShotPage(QWidget):
             len(video_paths), len(self._entries_by_key) - len(video_paths),
         )
         self._apply_filter()
+
+    def _reload_videos_and_sync(self) -> None:
+        """pushButton_reload / set_repo (tab open, repo switch) — reloads
+        local state first (fast, no network, same as _reload_videos alone
+        everywhere else), then kicks off a background pull of every
+        already-shared local entry's comments.json so Reload/opening the
+        tab also catches up with whatever anyone else most recently
+        pushed (Mark as Share or an incremental comment save elsewhere) —
+        added 2026-08-21, per the user's own request. Not used by every
+        _reload_videos() call site — only these two explicit user actions,
+        not e.g. after a delete or a share-upload success, which don't
+        need a full re-sync of every *other* entry too."""
+        self._reload_videos()
+        if self._api.cloud_sync is None or self._project_id is None or self._repo_id is None:
+            return
+        shared_dirs = [e.sequence_dir for e in self._entries_by_key.values() if e.share_state.get("is_shared")]
+        if not shared_dirs:
+            return
+        worker = SyncSharedCommentsWorker(
+            self._api.cloud_sync,
+            project_id=self._project_id,
+            repo_id=self._repo_id,
+            sequence_dirs=shared_dirs,
+            parent=self,
+        )
+        worker.succeeded.connect(self._on_shared_comments_synced)
+        worker.finished.connect(worker.deleteLater)
+        self._comments_sync_worker = worker
+        worker.start()
+
+    def _on_shared_comments_synced(self) -> None:
+        self._comments_sync_worker = None
+        # Re-reads whatever SyncSharedCommentsWorker just pulled — a second
+        # _reload_videos() (not _reload_videos_and_sync(), which would just
+        # kick off another sync pass and loop) so the table/scrubber marks
+        # reflect any comments.json that actually changed. Explicitly
+        # restores whatever was selected before this background sync ran
+        # (_reload_videos() always resets to its own "most recently
+        # modified" default otherwise) so a sync completing in the
+        # background doesn't yank the viewer away to a different entry.
+        previously_selected_key = self._selected_key
+        self._reload_videos()
+        if previously_selected_key is not None:
+            self._select_row_by_key(previously_selected_key)
 
     def _set_sort_mode(self, mode: str) -> None:
         self._sort_mode = mode
@@ -828,6 +880,29 @@ class UkoreShotPage(QWidget):
         self._show_status("Preparing sequence...")
         try:
             sequence_dir = self._ensure_sequence_for(entry)
+            if (
+                sequence_dir is not None
+                and entry.share_state.get("is_shared")
+                and self._api.cloud_sync is not None
+                and self._project_id is not None
+                and self._repo_id is not None
+            ):
+                # Resync this entry's comments.json from the cloud right
+                # before CommentEditor opens (2026-08-21, per the user's
+                # own request — "เพื่อความชัว", for certainty) — best-effort:
+                # a failed sync (offline, a transient network error) just
+                # means the editor opens against whatever's already local
+                # rather than blocking the user from opening it at all.
+                self._set_status_message("Syncing comments...")
+                try:
+                    pull_comments(
+                        self._api.cloud_sync,
+                        project_id=self._project_id,
+                        repo_id=self._repo_id,
+                        sequence_dir=sequence_dir,
+                    )
+                except Exception:  # noqa: BLE001
+                    _logger.warning("Comment: failed to resync comments.json for %s", sequence_dir, exc_info=True)
         finally:
             self._hide_status()
         if sequence_dir is None:

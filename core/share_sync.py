@@ -227,6 +227,66 @@ class CommentSyncWorker(QThread):
         self.succeeded.emit()
 
 
+def pull_comments(cloud_sync, *, project_id: str, repo_id: str, sequence_dir: Path) -> None:
+    """Re-pulls just comments.json for an already-shared entry from the
+    cloud, overwriting whatever's local — cloud always wins (same
+    last-write-wins the push side, CommentSyncWorker, already assumes; no
+    local-edit merge story). Cheap compared to a full PullByCodeWorker
+    pull since only this one small file moves, not the whole frame
+    sequence (which never changes once shared). Used both by
+    SyncSharedCommentsWorker's background bulk refresh and by
+    video_library_page.py's _on_edit_comment_clicked (resyncs the one
+    entry being opened, synchronously, right before CommentEditor
+    constructs) — both added 2026-08-21, per the user's own request that
+    Reload/opening the tab/opening Edit Comment should never show stale
+    comments after someone else's more recent Mark as Share or
+    incremental comment save."""
+    blob_name = "{}/{}".format(
+        _blob_prefix(project_id, repo_id, sequence_dir.name), comment_store.metadata_path(sequence_dir).name
+    )
+    cloud_sync.pull(blob_name, comment_store.metadata_path(sequence_dir))
+
+
+class SyncSharedCommentsWorker(QThread):
+    """Background bulk refresh — pulls comments.json for every already-
+    shared local entry at once (added 2026-08-21, per the user's own
+    request that Reload/opening the tab keep locally-pulled comments in
+    sync with whatever anyone else most recently pushed, without needing
+    to delete + re-pull an entry's whole sequence via its share code
+    again). Runs concurrently, same _MAX_CONCURRENT_TRANSFERS pattern
+    ShareUploadWorker/PullByCodeWorker already use, since this can be
+    several small pulls at once. Silent/best-effort per entry — a single
+    failed pull (offline, a transient network error) just leaves that
+    one entry's local comments.json as it was; this runs automatically
+    and often (every Reload, every tab open), so popping a warning dialog
+    for a routine transient failure would be noisy for no benefit."""
+
+    succeeded = Signal()
+
+    def __init__(self, cloud_sync, *, project_id: str, repo_id: str, sequence_dirs: list[Path], parent=None):
+        super().__init__(parent)
+        self._cloud_sync = cloud_sync
+        self._project_id = project_id
+        self._repo_id = repo_id
+        self._sequence_dirs = sequence_dirs
+
+    def run(self) -> None:
+        def _sync_one(sequence_dir: Path) -> None:
+            try:
+                pull_comments(
+                    self._cloud_sync, project_id=self._project_id, repo_id=self._repo_id, sequence_dir=sequence_dir
+                )
+            except Exception:  # noqa: BLE001 - best-effort, see class docstring
+                _logger.warning("SyncSharedCommentsWorker: failed to sync %s", sequence_dir, exc_info=True)
+
+        if not self._sequence_dirs:
+            self.succeeded.emit()
+            return
+        with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_TRANSFERS) as pool:
+            list(pool.map(_sync_one, self._sequence_dirs))
+        self.succeeded.emit()
+
+
 class PullByCodeWorker(QThread):
     """Resolves a pasted share code to its pointer, then pulls every frame
     (reconstructed by exact filename from frame_count/image_format — no

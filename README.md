@@ -228,6 +228,32 @@ win. Every file still gets attempted even if one fails; the first real
 (non-`ConflictError`) exception seen across the batch is what actually
 gets raised/reported.
 
+**Keeping locally-pulled comments in sync (2026-08-21, per the user's own
+request):** `_reload_videos()` alone only ever re-scans local disk, never
+the cloud — pasting an already-local share code into the search bar is
+also a no-op (`_on_search_enter`'s own "already local, skipping pull"
+check), so without this there was no way to see someone else's newer
+comments on an already-shared video short of deleting the local copy and
+re-pasting its code. `pushButton_reload` and `set_repo` (tab open/repo
+switch) now call `_reload_videos_and_sync` instead of `_reload_videos`
+directly — it reloads local state first (fast, unchanged), then kicks off
+`share_sync.SyncSharedCommentsWorker` in the background to pull just
+`comments.json` (not the whole frame sequence, which never changes once
+shared) for every locally-shared entry at once, concurrently, same
+`_MAX_CONCURRENT_TRANSFERS` pattern as the upload/pull workers. Silent/
+best-effort per entry — a single failed pull doesn't surface a dialog,
+since this runs automatically and often. `_on_edit_comment_clicked` also
+calls `share_sync.pull_comments` synchronously (with its own "Syncing
+comments..." status message) to resync just the one entry being opened,
+right before `CommentEditor` constructs — also best-effort, a failed
+resync still lets the editor open against whatever's already local rather
+than blocking. Both reuse the same cloud-always-wins, no-merge-story
+assumption `CommentSyncWorker`'s own push side already makes. Every
+`_reload_videos()` call site that isn't Reload/tab-open/Edit-Comment-open
+(delete, pull-by-code success, share-upload success/failure) deliberately
+stays plain `_reload_videos()` — a full re-sync of every *other* entry
+isn't warranted for those.
+
 Pasting that same code into `lineEdit_search_bar` and pressing Enter on a
 *different* machine pulls the sequence + `comments.json` back down
 automatically (`share_sync.PullByCodeWorker`) — the video shows up in the
