@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import fnmatch
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,8 @@ from ukoreshot_plugin.interface.comment_editor import CommentEditor
 from ukoreshot_plugin.interface.discord_send_worker import DiscordSendWorker
 from ukoreshot_plugin.interface.player_widget import PlayerWidget
 from ukoreshot_plugin.interface.thumbnail_loader import ThumbnailLoader
+
+_logger = logging.getLogger("UkoreShot.Library")
 
 _UI_FILE = Path(__file__).resolve().parent / "UkoreShotPage.ui"
 _VIDEO_EXTENSIONS = {".mov", ".mp4", ".avi"}
@@ -125,6 +128,7 @@ class UkoreShotPage(QWidget):
 
     def __init__(self, parent=None, *, api):
         super().__init__(parent)
+        _logger.info("UkoreShotPage.__init__ starting")
         self._api = api
         self._project_id: str | None = None
         self._repo_id: str | None = None
@@ -138,11 +142,15 @@ class UkoreShotPage(QWidget):
         self._thumbnail_loader = ThumbnailLoader(self)
         self._thumbnail_loader.thumbnailReady.connect(self._on_thumbnail_ready)
 
+        _logger.debug("loading %s", _UI_FILE)
         loader = QUiLoader()
         ui_file = QFile(str(_UI_FILE))
-        ui_file.open(QFile.ReadOnly)
+        if not ui_file.open(QFile.ReadOnly):
+            _logger.error("could not open %s for reading (errorString=%s)", _UI_FILE, ui_file.errorString())
         self.ui = loader.load(ui_file, self)
         ui_file.close()
+        if self.ui is None:
+            _logger.error("QUiLoader.load() returned None for %s — loader.errorString()=%s", _UI_FILE, loader.errorString())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -162,6 +170,24 @@ class UkoreShotPage(QWidget):
         self.copy_clipboard_button: QPushButton = find(QPushButton, "pushButton_copy_clipboard")
         self.get_format_video_button: QPushButton = find(QPushButton, "pushButton_get_format_video")
         self.auto_send_discord_button: QPushButton = find(QPushButton, "pushButton_auto_send_to_discord")
+
+        for _name, _widget in [
+            ("groupBox_playblast_viewer", self.viewer_group),
+            ("tableWidget_playblast_library", self.table),
+            ("lineEdit_search_bar", self.search_edit),
+            ("pushButton_reload", self.reload_button),
+            ("pushButton_sort_ascending", self.sort_ascending_button),
+            ("pushButton_sort_descending", self.sort_descending_button),
+            ("pushButton_sort_oldest", self.sort_oldest_button),
+            ("pushButton_sort_newest", self.sort_newest_button),
+            ("pushButton_comment", self.comment_button),
+            ("pushButton_mark_as_share", self.mark_as_share_button),
+            ("pushButton_copy_clipboard", self.copy_clipboard_button),
+            ("pushButton_get_format_video", self.get_format_video_button),
+            ("pushButton_auto_send_to_discord", self.auto_send_discord_button),
+        ]:
+            if _widget is None:
+                _logger.error("UkoreShotPage.ui has no widget named %r — findChild returned None", _name)
 
         # Player lives inside the .ui's own empty placeholder groupbox —
         # same "insert a real widget into a Designer-authored empty
@@ -197,20 +223,25 @@ class UkoreShotPage(QWidget):
         self.copy_clipboard_button.setEnabled(False)
 
         self._update_button_states()
+        _logger.info("UkoreShotPage.__init__ finished")
 
     # -- standard page protocol -------------------------------------------
 
     def set_repo(self, project, repo, workspace_root: str) -> None:
         self._project_id = project.id if project is not None else None
         self._repo_id = repo.id if repo is not None else None
+        _logger.info("set_repo(project_id=%s, repo_id=%s)", self._project_id, self._repo_id)
         self._reload_videos()
 
     # -- video list ---------------------------------------------------------
 
     def _resolve_ffmpeg(self) -> str | None:
         try:
-            return video_sequence.resolve_ffmpeg_path(discord_client.get_ffmpeg_path(self._api))
+            path = video_sequence.resolve_ffmpeg_path(discord_client.get_ffmpeg_path(self._api))
+            _logger.debug("resolved ffmpeg path: %s", path)
+            return path
         except VideoCompressionError as exc:
+            _logger.warning("ffmpeg not resolvable: %s", exc)
             QMessageBox.warning(self, "ffmpeg Required", str(exc))
             return None
 
@@ -220,6 +251,7 @@ class UkoreShotPage(QWidget):
         self._entries_by_key = {}
         if self._project_id and self._repo_id:
             self._video_root = video_path_store.resolve_video_root(self._api, self._project_id, self._repo_id)
+        _logger.debug("_reload_videos: video_root=%s", self._video_root)
         self._update_empty_state()
         if self._video_root is None or not self._video_root.is_dir():
             self._apply_filter()
@@ -266,6 +298,10 @@ class UkoreShotPage(QWidget):
             )
             self._entries_by_key[entry.key] = entry
 
+        _logger.info(
+            "_reload_videos: %d video file(s), %d sequence-only entr(y/ies)",
+            len(video_paths), len(self._entries_by_key) - len(video_paths),
+        )
         self._apply_filter()
 
     def _set_sort_mode(self, mode: str) -> None:
@@ -394,10 +430,13 @@ class UkoreShotPage(QWidget):
         if self._video_root is None:
             return
         if any(e.share_state.get("code") == text for e in self._entries_by_key.values()):
+            _logger.debug("share code %s already local, skipping pull", text)
             return  # already local, nothing to pull
         if self._api.cloud_sync is None:
+            _logger.warning("share code %s entered but api.cloud_sync is None", text)
             QMessageBox.warning(self, "Cloud Sync Unavailable", "Cloud sync isn't configured on this machine.")
             return
+        _logger.info("pulling shared video for code %s", text)
         self.search_edit.setEnabled(False)
         worker = PullByCodeWorker(self._api.cloud_sync, text, video_root=self._video_root, parent=self)
         worker.succeeded.connect(self._on_pull_by_code_succeeded)
@@ -410,17 +449,20 @@ class UkoreShotPage(QWidget):
     def _on_pull_by_code_succeeded(self, stem: str) -> None:
         self._pull_worker = None
         self.search_edit.setEnabled(True)
+        _logger.info("pull by code succeeded: %s", stem)
         self._reload_videos()
         QMessageBox.information(self, "Video Synced", "Pulled \"{}\" down from the cloud.".format(stem))
 
     def _on_pull_by_code_not_found(self) -> None:
         self._pull_worker = None
         self.search_edit.setEnabled(True)
+        _logger.info("pull by code: no such share code")
         QMessageBox.warning(self, "Not Found", "No shared video was found for that code.")
 
     def _on_pull_by_code_failed(self, message: str) -> None:
         self._pull_worker = None
         self.search_edit.setEnabled(True)
+        _logger.warning("pull by code failed: %s", message)
         QMessageBox.warning(self, "Sync Failed", message)
 
     # -- comment editor -----------------------------------------------------
@@ -433,20 +475,27 @@ class UkoreShotPage(QWidget):
             if ffmpeg_path is None:
                 return None
         try:
-            return video_sequence.ensure_sequence(ffmpeg_path, entry.video_path)
+            _logger.info("extracting sequence for %s", entry.video_path)
+            sequence_dir = video_sequence.ensure_sequence(ffmpeg_path, entry.video_path)
+            _logger.info("sequence ready at %s", sequence_dir)
+            return sequence_dir
         except VideoCompressionError as exc:
+            _logger.warning("sequence extraction failed for %s: %s", entry.video_path, exc)
             QMessageBox.warning(self, "Sequence Extraction Failed", str(exc))
             return None
 
     def _on_edit_comment_clicked(self) -> None:
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None:
+            _logger.debug("Comment clicked with no selection")
             return
         sequence_dir = self._ensure_sequence_for(entry)
         if sequence_dir is None:
             return
+        _logger.info("opening CommentEditor for %s", sequence_dir)
         dialog = CommentEditor(sequence_dir, api=self._api, project_id=self._project_id, repo_id=self._repo_id, parent=self)
         dialog.exec()
+        _logger.debug("CommentEditor closed")
         self._reload_videos()  # share state may have changed via an incremental sync during the session
 
     # -- share ---------------------------------------------------------------
@@ -454,8 +503,10 @@ class UkoreShotPage(QWidget):
     def _on_mark_as_share_clicked(self) -> None:
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None or self._project_id is None or self._repo_id is None:
+            _logger.debug("Mark as Share clicked with no selection/active repo")
             return
         if self._api.cloud_sync is None:
+            _logger.warning("Mark as Share clicked but api.cloud_sync is None")
             QMessageBox.warning(self, "Cloud Sync Unavailable", "Cloud sync isn't configured on this machine.")
             return
         if not entry.parsed:
@@ -502,6 +553,7 @@ class UkoreShotPage(QWidget):
             fps=fps,
         )
 
+        _logger.info("Mark as Share: uploading %s (code=%s, %d frame(s))", sequence_dir, code, len(frame_files))
         self.mark_as_share_button.setEnabled(False)
         worker = ShareUploadWorker(
             self._api.cloud_sync, project_id=self._project_id, repo_id=self._repo_id, sequence_dir=sequence_dir, parent=self
@@ -517,6 +569,7 @@ class UkoreShotPage(QWidget):
     def _on_share_upload_succeeded(self, code: str, sequence_dir: Path, frame_count: int, image_format: str, fps: float) -> None:
         self._share_worker = None
         self.mark_as_share_button.setEnabled(True)
+        _logger.info("Mark as Share: upload succeeded for %s, pushing pointer", sequence_dir)
         # Only made discoverable now that every frame + the final
         # comments.json (already carrying this same share info) has
         # actually landed — see the ordering note in
@@ -537,6 +590,7 @@ class UkoreShotPage(QWidget):
     def _on_share_upload_failed(self, message: str, sequence_dir: Path, *, was_already_shared: bool) -> None:
         self._share_worker = None
         self.mark_as_share_button.setEnabled(True)
+        _logger.warning("Mark as Share: upload failed for %s: %s", sequence_dir, message)
         if not was_already_shared:
             # Roll back the optimistic is_shared=True set before the upload
             # started (see _on_mark_as_share_clicked) — nothing actually
@@ -572,8 +626,10 @@ class UkoreShotPage(QWidget):
         try:
             output_path = compress_to_fit(ffmpeg_path, entry.video_path, max_upload_bytes)
         except VideoCompressionError as exc:
+            _logger.warning("Get Format Video failed for %s: %s", entry.video_path, exc)
             QMessageBox.warning(self, "Get Format Video Failed", str(exc))
             return
+        _logger.info("Get Format Video: revealing %s", output_path)
         open_in_file_explorer(output_path)
 
     def _on_send_discord_clicked(self) -> None:
@@ -611,6 +667,7 @@ class UkoreShotPage(QWidget):
         max_upload_bytes = discord_client.get_max_upload_mb(self._api, self._project_id, self._repo_id) * 1024 * 1024
         ffmpeg_path = discord_client.get_ffmpeg_path(self._api)
 
+        _logger.info("Send to Discord: sending %s (shot=%s)", video_path, shot_title)
         self.auto_send_discord_button.setEnabled(False)
         self.player_widget.send_discord_button.setEnabled(False)
         self._discord_worker = DiscordSendWorker(
@@ -632,10 +689,12 @@ class UkoreShotPage(QWidget):
         self._discord_worker = None
         self.auto_send_discord_button.setEnabled(True)
         self.player_widget.send_discord_button.setEnabled(True)
+        _logger.info("Send to Discord succeeded")
         QMessageBox.information(self, "Sent to Discord", "Video posted to Discord.")
 
     def _on_discord_send_failed(self, message: str) -> None:
         self._discord_worker = None
         self.auto_send_discord_button.setEnabled(True)
         self.player_widget.send_discord_button.setEnabled(True)
+        _logger.warning("Send to Discord failed: %s", message)
         QMessageBox.warning(self, "Discord Send Failed", message)

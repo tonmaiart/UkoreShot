@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 from pathlib import Path
 
@@ -7,6 +8,8 @@ from PySide6.QtCore import QThread, Signal
 
 from ukoreshot_plugin.core.discord_client import DiscordApiError, find_or_create_forum_post, send_video
 from ukoreshot_plugin.core.video_compress import VideoCompressionError, compress_to_fit, resolve_ffmpeg_path
+
+_logger = logging.getLogger("UkoreShot.Discord")
 
 
 class DiscordSendWorker(QThread):
@@ -45,6 +48,7 @@ class DiscordSendWorker(QThread):
         self._ffmpeg_path = ffmpeg_path
 
     def run(self) -> None:
+        _logger.info("DiscordSendWorker: sending %s (shot=%s)", self._video_path, self._shot_title)
         upload_path = self._video_path
         temp_dir: Path | None = None
         try:
@@ -56,8 +60,10 @@ class DiscordSendWorker(QThread):
             thread_id = find_or_create_forum_post(self._token, self._forum_channel_id, self._shot_title)
             send_video(self._token, thread_id, upload_path, self._message)
         except (DiscordApiError, VideoCompressionError) as exc:
+            _logger.exception("DiscordSendWorker failed for %s", self._video_path)
             self.failed.emit(str(exc))
         else:
+            _logger.info("DiscordSendWorker: send succeeded for %s", self._video_path)
             self.succeeded.emit()
         finally:
             if temp_dir is not None:

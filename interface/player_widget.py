@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import QUrl, Qt, Signal
@@ -24,6 +25,8 @@ from PySide6.QtWidgets import (
 
 from ukoreshot_plugin.interface.draw_overlay import TOOL_BRUSH, TOOL_ERASER, TOOL_SELECT, TOOL_TEXT, DrawOverlay
 from ukoreshot_plugin.interface.sequence_player import SequencePlayer
+
+_logger = logging.getLogger("UkoreShot.Player")
 
 _MIN_TOOL_SIZE = 1
 _MAX_TOOL_SIZE = 60
@@ -458,6 +461,7 @@ class PlayerWidget(QWidget):
     # -- loading --------------------------------------------------------
 
     def load_video(self, video_path: Path) -> None:
+        _logger.debug("load_video(%s)", video_path)
         self._mode = "video"
         self.sequence_player.clear()
         self._video_path = video_path
@@ -471,6 +475,7 @@ class PlayerWidget(QWidget):
         QMediaPlayer — see the class docstring for when each is used.
         send_discord_button stays disabled: a sequence-only entry (no local
         video file) has nothing to send to Discord."""
+        _logger.debug("load_sequence(%s)", sequence_dir)
         self._mode = "sequence"
         self._video_path = None
         self.player.stop()

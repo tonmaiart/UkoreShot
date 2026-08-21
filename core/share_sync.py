@@ -16,6 +16,7 @@ to enumerate what a bucket contains."""
 from __future__ import annotations
 
 import json
+import logging
 import tempfile
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from PySide6.QtCore import QThread, Signal
 # so it has no reason to bypass the sanctioned plugin_api surface.
 from plugin_api import ConflictError
 from ukoreshot_plugin.core import comment_store
+
+_logger = logging.getLogger("UkoreShot.ShareSync")
 
 _POINTER_PREFIX = "ukore_shot/share_codes"
 
@@ -95,23 +98,28 @@ class ShareUploadWorker(QThread):
         self._sequence_dir = sequence_dir
 
     def run(self) -> None:
+        prefix = _blob_prefix(self._project_id, self._repo_id, self._sequence_dir.name)
+        _logger.info("ShareUploadWorker: uploading %s to %s", self._sequence_dir, prefix)
         try:
-            prefix = _blob_prefix(self._project_id, self._repo_id, self._sequence_dir.name)
+            pushed = 0
             for local_path in sorted(self._sequence_dir.iterdir()):
                 if not local_path.is_file():
                     continue
                 blob_name = "{}/{}".format(prefix, local_path.name)
                 try:
                     self._cloud_sync.push(blob_name, local_path)
+                    pushed += 1
                 except ConflictError:
                     # Last-write-wins is correct for a shared asset, not a
                     # real conflict to surface — same reasoning
                     # launcher.py::_push_asset already documents for
                     # thumbnails/program_icons.
-                    pass
+                    _logger.debug("ConflictError pushing %s — ignored (last-write-wins)", blob_name)
         except Exception as exc:  # noqa: BLE001 - surfaced to the UI as a message, never crashes
+            _logger.exception("ShareUploadWorker failed for %s", self._sequence_dir)
             self.failed.emit(str(exc))
             return
+        _logger.info("ShareUploadWorker: pushed %d file(s) for %s", pushed, self._sequence_dir)
         self.succeeded.emit()
 
 
@@ -134,16 +142,18 @@ class CommentSyncWorker(QThread):
         self._sequence_dir = sequence_dir
 
     def run(self) -> None:
+        blob_name = "{}/{}".format(
+            _blob_prefix(self._project_id, self._repo_id, self._sequence_dir.name),
+            comment_store.metadata_path(self._sequence_dir).name,
+        )
+        _logger.info("CommentSyncWorker: pushing %s", blob_name)
         try:
-            blob_name = "{}/{}".format(
-                _blob_prefix(self._project_id, self._repo_id, self._sequence_dir.name),
-                comment_store.metadata_path(self._sequence_dir).name,
-            )
             try:
                 self._cloud_sync.push(blob_name, comment_store.metadata_path(self._sequence_dir))
             except ConflictError:
-                pass
+                _logger.debug("ConflictError pushing %s — ignored (last-write-wins)", blob_name)
         except Exception as exc:  # noqa: BLE001
+            _logger.exception("CommentSyncWorker failed for %s", self._sequence_dir)
             self.failed.emit(str(exc))
             return
         self.succeeded.emit()
@@ -166,12 +176,15 @@ class PullByCodeWorker(QThread):
         self._video_root = video_root
 
     def run(self) -> None:
+        _logger.info("PullByCodeWorker: resolving code %s", self._code)
         try:
             pointer = pull_pointer(self._cloud_sync, self._code)
         except Exception as exc:  # noqa: BLE001
+            _logger.exception("PullByCodeWorker: pull_pointer failed for code %s", self._code)
             self.failed.emit(str(exc))
             return
         if pointer is None:
+            _logger.info("PullByCodeWorker: no pointer blob found for code %s", self._code)
             self.not_found.emit()
             return
         try:
@@ -179,6 +192,7 @@ class PullByCodeWorker(QThread):
             image_format = pointer["image_format"]
             frame_count = pointer["frame_count"]
             prefix = _blob_prefix(pointer["project_id"], pointer["repo_id"], stem)
+            _logger.info("PullByCodeWorker: pulling %s (%d frame(s)) from %s", stem, frame_count, prefix)
             sequence_dir = self._video_root / stem
             sequence_dir.mkdir(parents=True, exist_ok=True)
             for index in range(1, frame_count + 1):
@@ -188,6 +202,8 @@ class PullByCodeWorker(QThread):
                 "{}/comments.json".format(prefix), comment_store.metadata_path(sequence_dir)
             )
         except Exception as exc:  # noqa: BLE001
+            _logger.exception("PullByCodeWorker: pull failed for code %s", self._code)
             self.failed.emit(str(exc))
             return
+        _logger.info("PullByCodeWorker: pull finished for %s", stem)
         self.succeeded.emit(stem)

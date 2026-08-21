@@ -1,10 +1,23 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 
 from plugin_api import CATEGORY_REPO, SectionSpec, SettingsTabSpec
+
+# stdlib logging (see developer/app/docs/plugins/DebugConsole.md) — no
+# registration needed, every logging.getLogger(...) record anywhere in the
+# app shows up live in DebugConsole automatically via the QtLogHandler
+# launcher.py attaches to the root logger. An import-time exception in one
+# of the `from ukoreshot_plugin...` lines below (or register() itself
+# raising) is already caught and logged by the host app's own loader under
+# logging.getLogger("ExternalPluginManager") — see
+# core/extensibility/loader.py's apply_plugins/_load_one — so check
+# DebugConsole filtered to that source first if this plugin isn't loading;
+# this module's own logger is for register()'s own steps succeeding or not.
+_logger = logging.getLogger("UkoreShot.Plugin")
 
 # This plugin lives in its own separate git repo, cloned into
 # cache/plugins/UkoreShot/ rather than under the main app's plugins/
@@ -79,7 +92,9 @@ def register(api) -> None:
     # page holds real session state (video list, selected entry, the
     # background ThumbnailLoader) that must survive a tab switch, not be
     # rebuilt from scratch every time the Sidebar shows this section again.
+    _logger.info("register() starting")
     page = UkoreShotPage(api=api)
+    _logger.debug("UkoreShotPage constructed")
     api.register_section(
         SectionSpec(
             key=PLUGIN_ID,
@@ -99,32 +114,45 @@ def register(api) -> None:
             category=CATEGORY_REPO,
         )
     )
+    _logger.debug("section + settings tab registered")
 
     # Contributes maya-scripts/UkorePlayblast/ to Maya's PYTHONPATH via the
     # shared maya_launcher_env_bridge, same convention every other Maya tool
     # plugin uses (core.* importability itself already comes from
     # PublishApi's own contribution, which also adds api.app_root to
     # PYTHONPATH — this plugin requires "publish_api", see manifest.json).
-    bridge = api.project_plugin_config_store(_MAYA_ENV_BRIDGE_PLUGIN_ID)
-    if bridge is not None:
-        tool_root = Path(__file__).resolve().parent
-        contributions = bridge.get("contributions", {})
-        contributions[_MAYA_TOOL_ID] = {"PYTHONPATH": {_ANY_VERSION: [str(tool_root / "maya-scripts")]}}
-        bridge.set("contributions", contributions)
-        labels = bridge.get("labels", {})
-        labels[_MAYA_TOOL_ID] = _MAYA_TOOL_LABEL
-        bridge.set("labels", labels)
+    # Wrapped separately so a problem here (e.g. no active project yet)
+    # can't take the section/settings-tab registration above down with it —
+    # those already succeeded by this point.
+    try:
+        bridge = api.project_plugin_config_store(_MAYA_ENV_BRIDGE_PLUGIN_ID)
+        if bridge is None:
+            _logger.debug("no active project yet — skipping Maya bridge contribution")
+        else:
+            tool_root = Path(__file__).resolve().parent
+            contributions = bridge.get("contributions", {})
+            contributions[_MAYA_TOOL_ID] = {"PYTHONPATH": {_ANY_VERSION: [str(tool_root / "maya-scripts")]}}
+            bridge.set("contributions", contributions)
+            labels = bridge.get("labels", {})
+            labels[_MAYA_TOOL_ID] = _MAYA_TOOL_LABEL
+            bridge.set("labels", labels)
 
-        # maya-scripts/UkorePlayblast/__init__.py registers this tool's own
-        # "Playblast"/"Playblast Options..." items directly into ukore_menu
-        # (no longer wired through MayaToolkit) — must be imported every
-        # Maya session for that module-level registration to run at all, see
-        # UkoreMenu's own README's "auto-import ตอน Maya เปิดไฟล์" requirement.
-        # order must stay below UkoreMenu's own (99) so registration runs
-        # before UkoreMenu's rebuild_menu().
-        hooks = bridge.get("launch_hooks", {})
-        hooks[_MAYA_TOOL_ID] = {
-            "order": 10,
-            "pre_open_mel": 'python("try:\\n    import UkorePlayblast\\nexcept ImportError:\\n    pass");',
-        }
-        bridge.set("launch_hooks", hooks)
+            # maya-scripts/UkorePlayblast/__init__.py registers this tool's
+            # own "Playblast"/"Playblast Options..." items directly into
+            # ukore_menu (no longer wired through MayaToolkit) — must be
+            # imported every Maya session for that module-level
+            # registration to run at all, see UkoreMenu's own README's
+            # "auto-import ตอน Maya เปิดไฟล์" requirement. order must stay
+            # below UkoreMenu's own (99) so registration runs before
+            # UkoreMenu's rebuild_menu().
+            hooks = bridge.get("launch_hooks", {})
+            hooks[_MAYA_TOOL_ID] = {
+                "order": 10,
+                "pre_open_mel": 'python("try:\\n    import UkorePlayblast\\nexcept ImportError:\\n    pass");',
+            }
+            bridge.set("launch_hooks", hooks)
+            _logger.debug("Maya bridge contribution written (tool_id=%s)", _MAYA_TOOL_ID)
+    except Exception:
+        _logger.exception("Maya bridge contribution failed — UkoreShot's own UI still registered fine above")
+
+    _logger.info("register() finished")

@@ -15,11 +15,14 @@ just being casually browsed."""
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from pathlib import Path
 
 from ukoreshot_plugin.core.video_compress import VideoCompressionError, resolve_ffmpeg_path  # noqa: F401
+
+_logger = logging.getLogger("UkoreShot.VideoSequence")
 
 _FPS_PATTERN = re.compile(r"([\d.]+)\s*fps")
 _DEFAULT_FPS = 24.0
@@ -74,6 +77,7 @@ def extract_sequence(
     VideoCompressionError (reused rather than a new exception type — same
     "ffmpeg failed" shape video_compress.py already has a caller-facing
     error class for) on failure or zero frames produced."""
+    _logger.info("extract_sequence: %s -> %s (ffmpeg=%s)", video_path, output_dir, ffmpeg_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     fps = probe_fps(ffmpeg_path, video_path)
     pattern = output_dir / "{}.%05d.{}".format(video_path.stem, image_format)
@@ -89,9 +93,14 @@ def extract_sequence(
         if p.name.startswith(video_path.stem + ".") and p.suffix == "." + image_format
     )
     if result.returncode != 0 or frame_count == 0:
+        _logger.error(
+            "ffmpeg failed (returncode=%s, frame_count=%s) for %s: %s",
+            result.returncode, frame_count, video_path, result.stderr[-2000:],
+        )
         raise VideoCompressionError(
             "ffmpeg failed to extract an image sequence from {}: {}".format(video_path.name, result.stderr[-500:])
         )
+    _logger.info("extract_sequence finished: %d frame(s), fps=%s", frame_count, fps)
     return frame_count, fps
 
 

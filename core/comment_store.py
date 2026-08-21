@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import logging
 import uuid
 from pathlib import Path
 
@@ -24,6 +25,8 @@ from pathlib import Path
 # it from sys.path's repo root, not relative to this file's own location) —
 # see ../README.md's naming note.
 from core.store import LocalConfigStore
+
+_logger = logging.getLogger("UkoreShot.CommentStore")
 
 _FILENAME = "comments.json"
 # core/comment_store.py, four parents up is the UkoreHub app root (same
@@ -66,6 +69,7 @@ def load(sequence_dir: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        _logger.warning("could not read/parse %s — treating as empty", path, exc_info=True)
         return {"frames": {}, "share": dict(_DEFAULT_SHARE_STATE)}
     if not isinstance(data, dict):
         return {"frames": {}, "share": dict(_DEFAULT_SHARE_STATE)}

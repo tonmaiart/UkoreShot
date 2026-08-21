@@ -15,16 +15,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# The app's own top-level core/ package, NOT this plugin's sibling
-# ukoreshot_plugin.core package (same name, different package, resolved
-# unambiguously since this is an absolute import) — see ../core/README.md's
-# naming note. Revived 2026-08-20 from git history (commit f9b3505 in
-# UkoreHubDev, before this plugin's draw/comment editor was extracted to
-# BananaSketch on 2026-08-08) — see ../README.md for the full story.
-from core.extensibility import debug_log
+import logging
 
-_DEBUG_SOURCE = "UkoreShot.Draw"
-debug_log.register_source(_DEBUG_SOURCE)
+# stdlib logging, not the retired core.extensibility.debug_log bus (gone
+# entirely as of 2026-08-21 — see core-api.md's events/ note and
+# DebugConsole.md) — logging.getLogger(name) needs no registration at all,
+# DebugConsole picks up every record automatically via the QtLogHandler
+# launcher.py attaches to the root logger. Revived 2026-08-20 from git
+# history (commit f9b3505 in UkoreHubDev, before this plugin's draw/comment
+# editor was extracted to BananaSketch on 2026-08-08) — see ../README.md
+# for the full story.
+_logger = logging.getLogger("UkoreShot.Draw")
 
 _UNDO_STACK_LIMIT = 20
 _MIN_TOOL_SIZE = 1
@@ -530,7 +531,7 @@ class DrawOverlay(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        debug_log.log(_DEBUG_SOURCE, f"resizeEvent, new size={self.size()}, visible={self.isVisible()}")
+        _logger.debug("resizeEvent, new size=%s, visible=%s", self.size(), self.isVisible())
         for box in self._text_boxes:
             box.move(round(box.norm_pos[0] * self.width()), round(box.norm_pos[1] * self.height()))
 
@@ -568,7 +569,7 @@ class DrawOverlay(QWidget):
         self._resizing = True
         self._resize_start_pos = self._hover_pos
         self._resize_start_value = self._brush_width
-        debug_log.log(_DEBUG_SOURCE, f"resize gesture started at size={self._brush_width}")
+        _logger.debug("resize gesture started at size=%s", self._brush_width)
 
     def _end_resize(self, *, commit: bool) -> None:
         if not commit and self._resize_start_value is not None:
@@ -578,7 +579,7 @@ class DrawOverlay(QWidget):
         self._resize_start_pos = None
         self._resize_start_value = None
         self.update()
-        debug_log.log(_DEBUG_SOURCE, f"resize gesture ended, commit={commit}, size={self._brush_width}")
+        _logger.debug("resize gesture ended, commit=%s, size=%s", commit, self._brush_width)
 
     # -- stroke capture -------------------------------------------------
 
@@ -618,9 +619,9 @@ class DrawOverlay(QWidget):
         return None
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        debug_log.log(
-            _DEBUG_SOURCE,
-            f"mousePressEvent at {event.position()}, drawing_enabled={self._drawing_enabled}, button={event.button()}",
+        _logger.debug(
+            "mousePressEvent at %s, drawing_enabled=%s, button=%s",
+            event.position(), self._drawing_enabled, event.button(),
         )
         if self._resizing:
             if event.button() == Qt.LeftButton:
@@ -659,7 +660,7 @@ class DrawOverlay(QWidget):
         self.update()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        debug_log.log(_DEBUG_SOURCE, f"mouseMoveEvent at {event.position()}, buttons={event.buttons()}")
+        _logger.debug("mouseMoveEvent at %s, buttons=%s", event.position(), event.buttons())
         self._hover_pos = event.position()
         if self._resizing:
             delta = event.position().x() - self._resize_start_pos.x()
@@ -771,10 +772,9 @@ class DrawOverlay(QWidget):
         canvas at all (leaveEvent), or the Text/Select tool is active
         (size doesn't apply to placing a text box or to selecting)."""
         if self._hover_pos is None or not self._drawing_enabled or self._tool in (TOOL_TEXT, TOOL_SELECT):
-            debug_log.log(
-                _DEBUG_SOURCE,
-                f"hover indicator skipped: hover_pos={self._hover_pos}, "
-                f"drawing_enabled={self._drawing_enabled}, tool={self._tool}",
+            _logger.debug(
+                "hover indicator skipped: hover_pos=%s, drawing_enabled=%s, tool=%s",
+                self._hover_pos, self._drawing_enabled, self._tool,
             )
             return
         if self._tool == TOOL_ERASER:

@@ -23,6 +23,7 @@ round, distinct from Mark as Share's one-time full upload)."""
 from __future__ import annotations
 
 import datetime
+import logging
 import uuid
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from ukoreshot_plugin.core.share_sync import CommentSyncWorker
 from ukoreshot_plugin.interface.draw_overlay import Stroke
 from ukoreshot_plugin.interface.player_widget import PlayerWidget
 
+_logger = logging.getLogger("UkoreShot.CommentEditor")
+
 _UI_FILE = Path(__file__).resolve().parent / "CommentEditor.ui"
 _COL_FRAME, _COL_AUTHOR, _COL_COMMENT, _COL_TIMESTAMP = range(4)
 
@@ -42,6 +45,7 @@ _COL_FRAME, _COL_AUTHOR, _COL_COMMENT, _COL_TIMESTAMP = range(4)
 class CommentEditor(QDialog):
     def __init__(self, sequence_dir: Path, *, api, project_id: str | None, repo_id: str | None, parent=None):
         super().__init__(parent)
+        _logger.info("CommentEditor.__init__ starting for %s", sequence_dir)
         self.setWindowTitle("Comment - {}".format(sequence_dir.name))
         self.setWindowState(Qt.WindowMaximized)
 
@@ -59,9 +63,12 @@ class CommentEditor(QDialog):
 
         loader = QUiLoader()
         ui_file = QFile(str(_UI_FILE))
-        ui_file.open(QFile.ReadOnly)
+        if not ui_file.open(QFile.ReadOnly):
+            _logger.error("could not open %s for reading (errorString=%s)", _UI_FILE, ui_file.errorString())
         self.ui = loader.load(ui_file, self)
         ui_file.close()
+        if self.ui is None:
+            _logger.error("QUiLoader.load() returned None for %s — loader.errorString()=%s", _UI_FILE, loader.errorString())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -95,6 +102,7 @@ class CommentEditor(QDialog):
 
         self.player_widget.load_sequence(sequence_dir)
         self._refresh_table()
+        _logger.info("CommentEditor.__init__ finished (%d frame(s) with saved data)", len(self._frames))
 
     # -- frame navigation / drawing persistence (in-memory only) -----------
 
@@ -254,7 +262,9 @@ class CommentEditor(QDialog):
     def _on_save_clicked(self) -> None:
         share_state = comment_store.get_share_state(self._sequence_dir)
         comment_store.save(self._sequence_dir, {"frames": self._frames, "share": share_state})
+        _logger.info("saved comments.json for %s (%d frame(s))", self._sequence_dir, len(self._frames))
         if share_state.get("is_shared") and self._api.cloud_sync is not None and self._project_id and self._repo_id:
+            _logger.info("video already shared — syncing comments.json to the cloud")
             self.save_button.setEnabled(False)
             worker = CommentSyncWorker(
                 self._api.cloud_sync,
@@ -273,10 +283,12 @@ class CommentEditor(QDialog):
 
     def _on_comment_sync_finished(self) -> None:
         self._sync_worker = None
+        _logger.info("comments.json cloud sync succeeded")
         self.accept()
 
     def _on_comment_sync_failed(self, message: str) -> None:
         self._sync_worker = None
+        _logger.warning("comments.json cloud sync failed: %s", message)
         QMessageBox.warning(self, "Cloud Sync Failed", "Comments saved locally, but the cloud sync failed: " + message)
         self.accept()
 
