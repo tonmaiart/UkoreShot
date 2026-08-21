@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1072</width>
+    <width>1145</width>
     <height>850</height>
    </rect>
   </property>
@@ -78,6 +78,24 @@
             <string>Sharing</string>
            </property>
            <layout class="QGridLayout" name="gridLayout">
+            <item row="0" column="3">
+             <widget class="QPushButton" name="pushButton_get_format_video">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="font">
+               <font>
+                <pointsize>10</pointsize>
+               </font>
+              </property>
+              <property name="text">
+               <string>Get Video</string>
+              </property>
+             </widget>
+            </item>
             <item row="0" column="1">
              <widget class="QPushButton" name="pushButton_copy_clipboard">
               <property name="minimumSize">
@@ -114,23 +132,18 @@
               </property>
              </widget>
             </item>
-            <item row="0" column="3">
-             <widget class="QPushButton" name="pushButton_get_format_video">
-              <property name="minimumSize">
+            <item row="0" column="2">
+             <spacer name="horizontalSpacer_2">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
                <size>
-                <width>0</width>
-                <height>30</height>
+                <width>40</width>
+                <height>20</height>
                </size>
               </property>
-              <property name="font">
-               <font>
-                <pointsize>10</pointsize>
-               </font>
-              </property>
-              <property name="text">
-               <string>Get Format Video</string>
-              </property>
-             </widget>
+             </spacer>
             </item>
             <item row="0" column="4">
              <widget class="QPushButton" name="pushButton_auto_send_to_discord">
@@ -146,22 +159,9 @@
                </font>
               </property>
               <property name="text">
-               <string>Auto Send to Discord Post</string>
+               <string>Get Video - Commented</string>
               </property>
              </widget>
-            </item>
-            <item row="0" column="2">
-             <spacer name="horizontalSpacer_2">
-              <property name="orientation">
-               <enum>Qt::Horizontal</enum>
-              </property>
-              <property name="sizeHint" stdset="0">
-               <size>
-                <width>40</width>
-                <height>20</height>
-               </size>
-              </property>
-             </spacer>
             </item>
            </layout>
           </widget>
