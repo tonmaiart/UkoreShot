@@ -11,26 +11,42 @@ _MIN_VIDEO_BITRATE_BPS = 100_000  # below this the output isn't worth producing
 _SIZE_SAFETY_MARGIN = 0.95  # leaves headroom for container/muxing overhead
 _DURATION_PATTERN = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)")
 
+# Bundled 2026-08-21 (win64, GPL static build incl. libx264 — see
+# bin/README.md for source/version/license) specifically to stop "ffmpeg
+# Required" from blocking a fresh machine's very first Comment/Mark as
+# Share/Discord send — this plugin's own core/video_sequence.py extraction
+# and the Discord compression below both depend on ffmpeg unconditionally
+# now that Maya no longer writes an image sequence itself.
+_BUNDLED_FFMPEG_PATH = Path(__file__).resolve().parent.parent / "bin" / "ffmpeg.exe"
+
 
 class VideoCompressionError(Exception):
     """Raised with a message that's already safe to show the user."""
 
 
 def resolve_ffmpeg_path(configured_path: str | None) -> str:
-    """An explicit configured_path wins if it's a real file; otherwise
-    falls back to whatever `ffmpeg` resolves to on this machine's PATH —
-    same "explicit per-machine override, else PATH lookup" shape
-    plugins/core/software_linker/ already uses for maya.exe. Raises
+    """An explicit configured_path wins if it's a real file (a studio-wide
+    override under Repository Setting > UkoreShot still makes sense — a
+    pinned/newer ffmpeg build, or a non-Windows machine the bundled .exe
+    can't run on); otherwise the bundled ffmpeg.exe that ships with this
+    plugin; otherwise whatever `ffmpeg` resolves to on this machine's PATH
+    (kept as a last-resort fallback in case the bundled exe is ever
+    missing/corrupted) — same "explicit per-machine override, else
+    built-in, else PATH lookup" shape plugins/core/software_linker/ uses
+    for maya.exe, just with a bundled binary as the new middle tier. Raises
     VideoCompressionError up front (rather than letting a much-later,
-    harder-to-diagnose subprocess failure surface) if neither resolves to
-    a real executable."""
+    harder-to-diagnose subprocess failure surface) if none of the three
+    resolves to a real executable."""
     if configured_path and Path(configured_path).is_file():
         return configured_path
+    if _BUNDLED_FFMPEG_PATH.is_file():
+        return str(_BUNDLED_FFMPEG_PATH)
     resolved = shutil.which("ffmpeg")
     if not resolved:
         raise VideoCompressionError(
-            "ffmpeg isn't installed or isn't on this machine's PATH — install it, or set an explicit "
-            "path under Repository Setting > UkoreShot."
+            "ffmpeg isn't installed or isn't on this machine's PATH, and this plugin's own bundled "
+            "bin/ffmpeg.exe is missing — reinstall/re-clone UkoreShot, or set an explicit path under "
+            "Repository Setting > UkoreShot."
         )
     return resolved
 

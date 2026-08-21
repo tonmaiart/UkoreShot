@@ -63,6 +63,14 @@ most of them irrelevant to any one task:
   `interface/`, and vice versa; where both sides need to agree on
   something (the video-root folder, the naming convention) it's
   duplicated deliberately rather than shared, see that folder's README.
+- [`bin/`](bin/README.md) — a bundled `ffmpeg.exe` (win64, ~145MB, GPL
+  static build), added 2026-08-21 so a fresh machine never needs to
+  install/configure ffmpeg itself just to Comment/Mark as Share/Send to
+  Discord — `core/video_compress.py::resolve_ffmpeg_path` uses it
+  automatically unless a Repository Setting > UkoreShot path is explicitly
+  configured. The one deliberately large binary in this repo's git
+  history from this point forward — see that README for source/version/
+  license/update instructions.
 - `manifest.json` / `plugin.py` / `__init__.py` — plugin entry point,
   stay at this top level: the host app's plugin loader
   (`core/extensibility/loader.py`'s `_load_one`) looks for both

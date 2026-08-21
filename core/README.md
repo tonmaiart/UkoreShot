@@ -156,17 +156,17 @@ revived in-house; see `../interface/README.md`.)
   for audio — deliberately not a frame-accurate two-pass encode, which
   would roughly double encode time for a use case that only needs to land
   under a size cap, not hit it exactly. `resolve_ffmpeg_path` prefers an
-  explicit configured path (`discord_client.get_ffmpeg_path`) and falls
-  back to a PATH lookup, raising `VideoCompressionError` immediately if
-  neither resolves — same "explicit per-machine override, else PATH
-  lookup" shape `plugins/core/software_linker/` already uses for
-  `maya.exe`. `../interface/discord_send_worker.py` is the only caller:
+  explicit configured path (`discord_client.get_ffmpeg_path`), then
+  `../bin/ffmpeg.exe` (bundled 2026-08-21 — see that folder's README),
+  then falls back to a PATH lookup, raising `VideoCompressionError`
+  immediately if none of the three resolves — same "explicit per-machine
+  override, else built-in, else PATH lookup" shape `plugins/core/
+  software_linker/` already uses for `maya.exe`, just with a bundled
+  binary as the new middle tier (added specifically so a fresh machine
+  never blocks on "ffmpeg Required" for its first Comment/Mark as Share/
+  Discord send — this function is also `video_sequence.py`'s only ffmpeg
+  resolution path, see that entry above). `../interface/discord_send_worker.py`
+  is the only Discord-side caller:
   compresses (into a fresh temp dir it cleans up afterward, success or
   failure) only when the video's already over the configured limit, then
-  sends whichever path (original or compressed) actually ends up under it.
-
-**Working here:** stay inside `core/` unless the change needs a new
-top-level `core/` primitive (a genuinely different package, see the naming
-note above) or touches `../maya-scripts/UkorePlayblast/`'s matching
-`_resolve_video_root` (read-only from this side — both just happen to
-agree on the same `cache_dir`-derived folder, see `../maya-scripts/README.md`).
+  sends whichever path (original or co
