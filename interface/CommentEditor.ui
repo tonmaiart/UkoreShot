@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>934</width>
+    <width>1067</width>
     <height>588</height>
    </rect>
   </property>
@@ -47,7 +47,7 @@
     </widget>
    </item>
    <item row="2" column="0">
-    <widget class="QPushButton" name="pushButton_cancel_comment">
+    <widget class="QPushButton" name="pushButton_2">
      <property name="text">
       <string>Cancel Comment</string>
      </property>
