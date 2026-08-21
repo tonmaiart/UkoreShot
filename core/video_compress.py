@@ -1,52 +1,98 @@
 from __future__ import annotations
 
+import logging
+import platform
 import re
 import shutil
 import subprocess
 import tempfile
+import urllib.request
+import zipfile
 from pathlib import Path
+
+_logger = logging.getLogger("UkoreShot.VideoCompress")
 
 _AUDIO_BITRATE_BPS = 128_000
 _MIN_VIDEO_BITRATE_BPS = 100_000  # below this the output isn't worth producing
 _SIZE_SAFETY_MARGIN = 0.95  # leaves headroom for container/muxing overhead
 _DURATION_PATTERN = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)")
 
-# Bundled 2026-08-21 (win64, GPL static build incl. libx264 — see
-# bin/README.md for source/version/license) specifically to stop "ffmpeg
-# Required" from blocking a fresh machine's very first Comment/Mark as
-# Share/Discord send — this plugin's own core/video_sequence.py extraction
-# and the Discord compression below both depend on ffmpeg unconditionally
-# now that Maya no longer writes an image sequence itself.
-_BUNDLED_FFMPEG_PATH = Path(__file__).resolve().parent.parent / "bin" / "ffmpeg.exe"
+# Was a git-tracked bin/ffmpeg.exe (win64 GPL static build) bundled directly
+# in this repo from 2026-08-21 — removed the same day after it blocked
+# `git push` outright (145MB, over GitHub's 100MB hard file-size limit).
+# Replaced with this: a per-machine, on-demand download into UkoreHub's own
+# gitignored cache dir instead of a git-tracked binary, using the same
+# BtbN/FFmpeg-Builds win64-gpl asset that used to be bundled (same source/
+# license, just fetched once per machine instead of shipped in git history).
+_FFMPEG_DOWNLOAD_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 
 
 class VideoCompressionError(Exception):
     """Raised with a message that's already safe to show the user."""
 
 
-def resolve_ffmpeg_path(configured_path: str | None) -> str:
+def _cached_ffmpeg_path(cache_dir: Path) -> Path:
+    return cache_dir / "ukore_shot" / "bin" / "ffmpeg.exe"
+
+
+def _download_ffmpeg(dest_path: Path) -> None:
+    """Downloads BtbN's win64 GPL ffmpeg build straight into dest_path,
+    extracting only the single bin/ffmpeg.exe member from the zip
+    (ffplay/ffprobe are never needed here). Downloads to sibling temp files
+    first and only replaces dest_path once the extraction fully succeeds,
+    so a failed/interrupted download can never leave a half-written
+    ffmpeg.exe behind for a later resolve_ffmpeg_path call to trip over."""
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_zip = dest_path.parent / "ffmpeg_download.zip.tmp"
+    tmp_exe = dest_path.parent / "ffmpeg.exe.tmp"
+    _logger.info("downloading ffmpeg from %s", _FFMPEG_DOWNLOAD_URL)
+    try:
+        urllib.request.urlretrieve(_FFMPEG_DOWNLOAD_URL, tmp_zip)
+        with zipfile.ZipFile(tmp_zip) as zf:
+            member = next((n for n in zf.namelist() if n.replace("\\", "/").endswith("/bin/ffmpeg.exe")), None)
+            if member is None:
+                raise VideoCompressionError("Downloaded ffmpeg archive didn't contain a bin/ffmpeg.exe member.")
+            with zf.open(member) as src, open(tmp_exe, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        tmp_exe.replace(dest_path)
+        _logger.info("ffmpeg downloaded to %s", dest_path)
+    finally:
+        tmp_zip.unlink(missing_ok=True)
+        tmp_exe.unlink(missing_ok=True)
+
+
+def resolve_ffmpeg_path(configured_path: str | None, cache_dir: Path) -> str:
     """An explicit configured_path wins if it's a real file (a studio-wide
     override under Repository Setting > UkoreShot still makes sense — a
-    pinned/newer ffmpeg build, or a non-Windows machine the bundled .exe
-    can't run on); otherwise the bundled ffmpeg.exe that ships with this
-    plugin; otherwise whatever `ffmpeg` resolves to on this machine's PATH
-    (kept as a last-resort fallback in case the bundled exe is ever
-    missing/corrupted) — same "explicit per-machine override, else
-    built-in, else PATH lookup" shape plugins/core/software_linker/ uses
-    for maya.exe, just with a bundled binary as the new middle tier. Raises
-    VideoCompressionError up front (rather than letting a much-later,
-    harder-to-diagnose subprocess failure surface) if none of the three
-    resolves to a real executable."""
+    pinned/newer ffmpeg build, or a non-Windows machine the downloaded
+    win64 .exe can't run on); otherwise a previously-downloaded copy
+    already cached under cache_dir/ukore_shot/bin/ffmpeg.exe; otherwise a
+    fresh download of that same win64 build straight into that cache path
+    (Windows only — see _FFMPEG_DOWNLOAD_URL); otherwise whatever `ffmpeg`
+    resolves to on this machine's PATH (kept as a last-resort fallback in
+    case the download ever fails, e.g. no internet) — same "explicit
+    per-machine override, else built-in, else PATH lookup" shape
+    plugins/core/software_linker/ uses for maya.exe, just with an
+    on-demand download as the new middle tier instead of a bundled binary.
+    Raises VideoCompressionError up front (rather than letting a
+    much-later, harder-to-diagnose subprocess failure surface) if none of
+    these resolves to a real executable."""
     if configured_path and Path(configured_path).is_file():
         return configured_path
-    if _BUNDLED_FFMPEG_PATH.is_file():
-        return str(_BUNDLED_FFMPEG_PATH)
+    cached = _cached_ffmpeg_path(cache_dir)
+    if cached.is_file():
+        return str(cached)
+    if platform.system() == "Windows":
+        try:
+            _download_ffmpeg(cached)
+            return str(cached)
+        except Exception as exc:  # noqa: BLE001 - falls through to a PATH lookup below
+            _logger.warning("ffmpeg auto-download failed: %s", exc)
     resolved = shutil.which("ffmpeg")
     if not resolved:
         raise VideoCompressionError(
-            "ffmpeg isn't installed or isn't on this machine's PATH, and this plugin's own bundled "
-            "bin/ffmpeg.exe is missing — reinstall/re-clone UkoreShot, or set an explicit path under "
-            "Repository Setting > UkoreShot."
+            "ffmpeg isn't installed or isn't on this machine's PATH, and the automatic ffmpeg download failed "
+            "(check your internet connection) — or set an explicit path under Repository Setting > UkoreShot."
         )
     return resolved
 

@@ -30,6 +30,10 @@ _DEFAULT_SHARE_STATE = {
     "frame_count": None,
     "image_format": None,
     "fps": None,
+    # None when the source video has no audio track (most playblasts) —
+    # see video_sequence.py's extract_audio/AUDIO_FILENAME_SUFFIX. "m4a"
+    # once an audio track has actually been extracted for this video.
+    "audio_format": None,
 }
 
 

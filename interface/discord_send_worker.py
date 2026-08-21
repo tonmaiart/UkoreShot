@@ -36,6 +36,7 @@ class DiscordSendWorker(QThread):
         *,
         max_upload_bytes: int,
         ffmpeg_path: str | None,
+        cache_dir: Path,
         parent=None,
     ):
         super().__init__(parent)
@@ -46,6 +47,7 @@ class DiscordSendWorker(QThread):
         self._message = message
         self._max_upload_bytes = max_upload_bytes
         self._ffmpeg_path = ffmpeg_path
+        self._cache_dir = cache_dir
 
     def run(self) -> None:
         _logger.info("DiscordSendWorker: sending %s (shot=%s)", self._video_path, self._shot_title)
@@ -53,7 +55,7 @@ class DiscordSendWorker(QThread):
         temp_dir: Path | None = None
         try:
             if self._video_path.stat().st_size > self._max_upload_bytes:
-                ffmpeg_path = resolve_ffmpeg_path(self._ffmpeg_path)
+                ffmpeg_path = resolve_ffmpeg_path(self._ffmpeg_path, self._cache_dir)
                 upload_path = compress_to_fit(ffmpeg_path, self._video_path, self._max_upload_bytes)
                 if upload_path != self._video_path:
                     temp_dir = upload_path.parent

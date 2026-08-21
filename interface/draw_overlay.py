@@ -89,7 +89,12 @@ class DrawOverlay(QWidget):
 
     Selecting (Select tool only) shows a highlight — a dashed bounding box
     around a selected stroke (_paint_stroke_selection) — and Delete/
-    Backspace removes whichever stroke is currently selected."""
+    Backspace removes whichever stroke is currently selected.
+
+    **Middle mouse click, added 2026-08-21**: opens the color panel
+    (colorPickRequested, wired to player_widget.py's existing
+    _on_pick_color) regardless of which tool/mode is currently active —
+    checked first in mousePressEvent, ahead of every other branch."""
 
     strokesChanged = Signal()
     # Emitted whenever brush_width changes from any source (the "F" resize
@@ -97,6 +102,13 @@ class DrawOverlay(QWidget):
     # toolbar's Size slider itself) so PlayerWidget can keep that slider's
     # displayed value in sync no matter which of the three changed it.
     toolSizeChanged = Signal(int)
+    # Middle mouse click anywhere on the canvas, added 2026-08-21 per the
+    # user's own request — an alternative to the toolbar's color swatch.
+    # DrawOverlay only emits the request; it never imports QColorDialog
+    # itself (that lives in player_widget.py, which already owns the
+    # toolbar's own color-picking flow) — same signal-out split every other
+    # toolbar-facing action here uses.
+    colorPickRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -305,6 +317,12 @@ class DrawOverlay(QWidget):
             "mousePressEvent at %s, drawing_enabled=%s, button=%s, select_mode=%s",
             event.position(), self._drawing_enabled, event.button(), self._select_mode,
         )
+        if event.button() == Qt.MiddleButton:
+            # Checked first, ahead of resizing/select-mode/drawing-enabled —
+            # color picking is orthogonal to whichever tool/mode is
+            # currently active, so it should always be reachable.
+            self.colorPickRequested.emit()
+            return
         if self._resizing:
             if event.button() == Qt.LeftButton:
                 self._end_resize(commit=True)

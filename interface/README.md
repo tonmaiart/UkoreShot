@@ -92,7 +92,15 @@ task is about drawing/commenting on a frame, it's `draw_overlay.py`/
   in this mode — neither makes sense from inside the editor itself.
   `frameIndexChanged(int)` fires on every sequence-mode frame change —
   `comment_editor.py` uses it to load/save the right frame's
-  strokes/text-boxes as the user scrubs.
+  strokes/text-boxes as the user scrubs. **Added 2026-08-21**: `Ctrl+Z`/
+  `Ctrl+Shift+Z` `QShortcut`s (`show_edit_tools` only, same
+  `_is_typing()`-guarded pattern the `A`/`D`/`Space` shortcuts already use)
+  call `draw_overlay.undo()`/`redo()` — the toolbar buttons already did,
+  this just adds the keyboard bindings. `Ctrl+Shift+Z` specifically, not
+  `QKeySequence.Redo` (which is `Ctrl+Y` on Windows). Also connects
+  `draw_overlay.colorPickRequested` (middle-click on the canvas, see
+  `draw_overlay.py`'s own entry) to the same `_on_pick_color` the toolbar's
+  color swatch button uses.
 
 - `sequence_player.py` — `SequencePlayer(QObject)`, added 2026-08-20. Reads
   numbered frame images off disk on every `seek()`/`step()`/timer tick (no
@@ -101,6 +109,14 @@ task is about drawing/commenting on a frame, it's `draw_overlay.py`/
   24.0 fallback. `playbackStateChanged(bool)` covers both explicit
   play()/pause() and the timer naturally auto-pausing at the last frame —
   `player_widget.py` needs both to keep its play/pause icon in sync.
+  **Audio, added 2026-08-21**: `load()` also looks for a
+  `<stem>.audio.m4a` next to the frames (`../core/video_sequence.py`'s
+  `audio_path_for` — absent for a silent source video, the common case)
+  and, if found, plays it through an internal `QMediaPlayer`. While a
+  track is loaded, `_advance()`'s timer tick polls the audio player's own
+  `.position()` as the authoritative clock instead of incrementing the
+  frame index by one, so the two can't slowly drift apart over a long
+  clip; with no audio track, behavior is unchanged from before this date.
 
 - `draw_overlay.py` — `Stroke`, `_TextBoxItem`, `DrawOverlay`,
   `ReadOnlyCommentOverlay`, `paint_stroke_points`. Revived 2026-08-20 near-
@@ -109,6 +125,13 @@ task is about drawing/commenting on a frame, it's `draw_overlay.py`/
   select tool state machine, normalized-0-1-point strokes, snapshot
   undo/redo (not persisted, resets per frame). No direct file I/O — the
   embedding widget (`comment_editor.py`) owns persistence, same as before.
+  **Middle mouse click, added 2026-08-21**: emits `colorPickRequested`
+  (checked first in `mousePressEvent`, ahead of resizing/select-mode/
+  drawing-enabled — color picking is always reachable regardless of tool)
+  — `player_widget.py` wires it to the same `_on_pick_color` the toolbar's
+  color swatch already used. `player_widget.py` also gained `Ctrl+Z`/
+  `Ctrl+Shift+Z` keyboard shortcuts for `undo()`/`redo()` the same day —
+  see that file's own entry below.
 
 - `comment_editor.py` — `CommentEditor(QDialog)`, new 2026-08-20, wraps
   `CommentEditor.ui`. Operates entirely on a `sequence_dir` (never a video
@@ -123,10 +146,17 @@ task is about drawing/commenting on a frame, it's `draw_overlay.py`/
   already-shared video should sync incrementally, not require a fresh Mark
   as Share). Cancel discards everything, no disk/cloud write at all. The
   `tableWidget` ("Keyframe Comment") is one row per existing comment
-  (Frame/Author/Comment/Time) plus a trailing blank row — double-click its
-  Comment cell to add a new comment on whichever frame the player currently
-  shows; double-click an existing row to edit it in place; right-click for
-  Delete Comment.
+  (Frame/Author/Comment/Time) plus a blank composer row for whichever frame
+  the player currently shows — double-click its Comment cell to add a new
+  comment there; double-click an existing row to edit it in place;
+  right-click for Delete Comment. **Fixed 2026-08-21** per the user's own
+  request that the table always sort by keyframe: `_refresh_table` used to
+  always append that composer row last regardless of its own frame number,
+  so scrubbing to an earlier frame than others already commented on put its
+  row at the bottom instead of in numeric order — `bisect.bisect_right`
+  now inserts it at its correct sorted position among the other rows
+  instead (after any existing rows for that same frame, so it still reads
+  as "the next new entry for this frame").
 
 - `thumbnail_loader.py` — `ThumbnailLoader`: unchanged from before —
   grabs a video file's first decodable frame as a `QPixmap`. A sequence-only

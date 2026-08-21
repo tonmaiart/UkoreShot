@@ -67,7 +67,19 @@ revived in-house; see `../interface/README.md`.)
   browsing the library never costs an ffmpeg call. `probe_fps` parses the
   " fps," token off ffmpeg's own `-i`-with-no-output stderr dump, same
   technique `video_compress.py`'s `_probe_duration_seconds` already uses
-  for that stream's `Duration:` line.
+  for that stream's `Duration:` line. `AUDIO_FILENAME_SUFFIX`/
+  `audio_path_for`/`has_audio_file`/`extract_audio` (added 2026-08-21) do
+  the same job for a video's audio track: `ensure_sequence` calls
+  `extract_audio` right after the frame extraction, writing
+  `<stem>.audio.m4a` (re-encoded to AAC, not stream-copied, so every source
+  codec lands in one predictable container `../interface/sequence_player.py`
+  can always play back) into the same `sequence_dir` the frames live in — a
+  silent source video (most playblasts) just means no file gets written,
+  not an error; `has_audio_file` is what lets a later call skip
+  re-extracting once it exists (a silent video has no persisted "already
+  checked" marker, so it cheaply re-attempts the ffmpeg probe on every
+  call — an accepted trade-off, same one `probe_fps` already makes for
+  fps).
 - `comment_store.py` — per-video comment/drawing/share metadata, revived
   2026-08-20 from git history (commit `f9b3505` in `UkoreHubDev`, before
   `BananaSketch`'s extraction — see `../interface/README.md`). Now lives at
@@ -76,8 +88,10 @@ revived in-house; see `../interface/README.md`.)
   the user's instruction that comment data lives in the same folder as the
   image sequence. `load`/`save` round-trip `{"frames": {...}, "share":
   {...}}`; `get_share_state`/`set_share_state` manage the `"share"` block
-  (`is_shared`, `code`, `shared_at`, `frame_count`, `image_format`, `fps` —
-  enough for `share_sync.py` to reconstruct every blob name for a share
+  (`is_shared`, `code`, `shared_at`, `frame_count`, `image_format`, `fps`,
+  `audio_format` — the last added 2026-08-21, `None` for a silent video,
+  `"m4a"` once `video_sequence.extract_audio` has produced one — enough
+  for `share_sync.py` to reconstruct every blob name for a share
   without ever needing to *list* a bucket). `generate_share_code(shot_code,
   version)` builds the `{shot_code}_v{version:03d}_{4 hex chars}` label
   Mark as Share generates once and Copy Clipboard copies as plain text.
@@ -93,15 +107,26 @@ revived in-house; see `../interface/README.md`.)
   puller can reconstruct every frame's exact blob name
   (`{stem}.{i:05d}.{image_format}`) without ever enumerating the bucket.
   Three one-shot `QThread`s, same shape as `discord_send_worker.py`'s
-  `DiscordSendWorker`: `ShareUploadWorker` (every frame + `comments.json`,
-  for Mark as Share), `CommentSyncWorker` (just `comments.json`, for
+  `DiscordSendWorker`: `ShareUploadWorker` (every file in `sequence_dir` —
+  every frame + `comments.json`, and, since 2026-08-21, the extracted
+  `<stem>.audio.m4a` too whenever one exists, since this worker just pushes
+  whatever's actually sitting in the folder rather than an enumerated file
+  list, for Mark as Share), `CommentSyncWorker` (just `comments.json`, for
   `comment_editor.py`'s Save Comment on an already-shared video — the
   incremental-sync-on-save behavior confirmed with the user), and
-  `PullByCodeWorker` (resolves a pasted code, pulls everything down into
-  `video_root/<stem>/` — `video_library_page.py`'s search-bar Enter-key
-  round-trip). All three swallow `ConflictError` per-file — last-write-wins
-  is correct for a shared asset, same reasoning `launcher.py::_push_asset`
-  already documents for thumbnails/program_icons.
+  `PullByCodeWorker` (resolves a pasted code, pulls every frame +
+  `comments.json`, then — best-effort, a failure here doesn't fail the
+  whole pull — the audio track too if the pointer's `audio_format` says one
+  was pushed, down into `video_root/<stem>/` —
+  `video_library_page.py`'s search-bar Enter-key round-trip). `push_pointer`'s
+  `audio_format` param (added 2026-08-21, defaults to `None` for the common
+  silent-video case) is what tells a puller on a different machine whether
+  to bother asking for that blob at all — an older pointer pushed before
+  audio support existed simply has no such key, `pointer.get("audio_format")`
+  returns `None`, nothing extra is attempted. All three swallow
+  `ConflictError` per-file — last-write-wins is correct for a shared asset,
+  same reasoning `launcher.py::_push_asset` already documents for
+  thumbnails/program_icons.
 - `discord_client.py` — the Discord side of the "Send to Discord" button
   (`../interface/player_widget.py`'s `send_discord_button`,
   `sendToDiscordRequested`). `get_channel_id`/`set_channel_id` and
@@ -155,17 +180,25 @@ revived in-house; see `../interface/README.md`.)
   `ffprobe` lookup) with a 5% safety margin and a fixed 128kbps reserved
   for audio — deliberately not a frame-accurate two-pass encode, which
   would roughly double encode time for a use case that only needs to land
-  under a size cap, not hit it exactly. `resolve_ffmpeg_path` prefers an
-  explicit configured path (`discord_client.get_ffmpeg_path`), then
-  `../bin/ffmpeg.exe` (bundled 2026-08-21 — see that folder's README),
-  then falls back to a PATH lookup, raising `VideoCompressionError`
-  immediately if none of the three resolves — same "explicit per-machine
-  override, else built-in, else PATH lookup" shape `plugins/core/
-  software_linker/` already uses for `maya.exe`, just with a bundled
-  binary as the new middle tier (added specifically so a fresh machine
-  never blocks on "ffmpeg Required" for its first Comment/Mark as Share/
-  Discord send — this function is also `video_sequence.py`'s only ffmpeg
-  resolution path, see that entry above). `../interface/discord_send_worker.py`
+  under a size cap, not hit it exactly. `resolve_ffmpeg_path(configured_path,
+  cache_dir)` prefers an explicit configured path
+  (`discord_client.get_ffmpeg_path`), then a previously-downloaded copy
+  already cached at `cache_dir/ukore_shot/bin/ffmpeg.exe`, then downloads
+  that same win64 GPL build fresh into that cache path (Windows only —
+  `_download_ffmpeg`, from `github.com/BtbN/FFmpeg-Builds`'s `latest`
+  release asset), then falls back to a PATH lookup, raising
+  `VideoCompressionError` immediately if none of these resolves — same
+  "explicit per-machine override, else built-in, else PATH lookup" shape
+  `plugins/core/software_linker/` already uses for `maya.exe`, just with an
+  on-demand download as the new middle tier (added specifically so a fresh
+  machine never blocks on "ffmpeg Required" for its first Comment/Mark as
+  Share/Discord send — this function is also `video_sequence.py`'s only
+  ffmpeg resolution path, see that entry above). A git-tracked
+  `bin/ffmpeg.exe` shipped directly in this repo for one day (2026-08-21)
+  before being removed — 145MB blew past GitHub's 100MB file-size limit
+  and blocked `git push` outright; the cache-dir download replaces it
+  entirely, so nothing about ffmpeg lives in this repo's git history
+  anymore. `../interface/discord_send_worker.py`
   is the only Discord-side caller:
   compresses (into a fresh temp dir it cleans up afterward, success or
   failure) only when the video's already over the configured limit, then

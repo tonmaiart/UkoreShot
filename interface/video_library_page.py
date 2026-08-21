@@ -233,7 +233,7 @@ class UkoreShotPage(QWidget):
 
     def _resolve_ffmpeg(self) -> str | None:
         try:
-            path = video_sequence.resolve_ffmpeg_path(discord_client.get_ffmpeg_path(self._api))
+            path = video_sequence.resolve_ffmpeg_path(discord_client.get_ffmpeg_path(self._api), self._api.cache_dir)
             _logger.debug("resolved ffmpeg path: %s", path)
             return path
         except VideoCompressionError as exc:
@@ -551,6 +551,13 @@ class UkoreShotPage(QWidget):
             fps = video_sequence.probe_fps(ffmpeg_path, entry.video_path)
         else:
             fps = entry.share_state.get("fps") or 24.0
+        # Same fixed <stem>.audio.m4a name video_sequence.ensure_sequence
+        # writes to (a no-op if the source has no audio track at all) —
+        # ShareUploadWorker below uploads it automatically since it just
+        # pushes every file already sitting in sequence_dir, but the
+        # pointer still needs to record whether it exists so a puller on
+        # another machine knows whether to bother asking for it.
+        audio_format = "m4a" if video_sequence.has_audio_file(sequence_dir, sequence_dir.name) else None
         comment_store.set_share_state(
             sequence_dir,
             is_shared=True,
@@ -559,6 +566,7 @@ class UkoreShotPage(QWidget):
             frame_count=len(frame_files),
             image_format=image_format,
             fps=fps,
+            audio_format=audio_format,
         )
 
         _logger.info("Mark as Share: uploading %s (code=%s, %d frame(s))", sequence_dir, code, len(frame_files))
@@ -567,14 +575,14 @@ class UkoreShotPage(QWidget):
             self._api.cloud_sync, project_id=self._project_id, repo_id=self._repo_id, sequence_dir=sequence_dir, parent=self
         )
         worker.succeeded.connect(
-            lambda: self._on_share_upload_succeeded(code, sequence_dir, len(frame_files), image_format, fps)
+            lambda: self._on_share_upload_succeeded(code, sequence_dir, len(frame_files), image_format, fps, audio_format)
         )
         worker.failed.connect(lambda message: self._on_share_upload_failed(message, sequence_dir, was_already_shared=bool(existing_code)))
         worker.finished.connect(worker.deleteLater)
         self._share_worker = worker
         worker.start()
 
-    def _on_share_upload_succeeded(self, code: str, sequence_dir: Path, frame_count: int, image_format: str, fps: float) -> None:
+    def _on_share_upload_succeeded(self, code: str, sequence_dir: Path, frame_count: int, image_format: str, fps: float, audio_format: str | None) -> None:
         self._share_worker = None
         self.mark_as_share_button.setEnabled(True)
         _logger.info("Mark as Share: upload succeeded for %s, pushing pointer", sequence_dir)
@@ -591,6 +599,7 @@ class UkoreShotPage(QWidget):
             frame_count=frame_count,
             image_format=image_format,
             fps=fps,
+            audio_format=audio_format,
         )
         self._reload_videos()
         QMessageBox.information(self, "Marked as Share", "Shared. Code: {}".format(code))
@@ -686,6 +695,7 @@ class UkoreShotPage(QWidget):
             video_path.name,
             max_upload_bytes=max_upload_bytes,
             ffmpeg_path=ffmpeg_path,
+            cache_dir=self._api.cache_dir,
             parent=self,
         )
         self._discord_worker.succeeded.connect(self._on_discord_send_succeeded)

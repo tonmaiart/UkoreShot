@@ -28,6 +28,13 @@ _FPS_PATTERN = re.compile(r"([\d.]+)\s*fps")
 _DEFAULT_FPS = 24.0
 _FRAME_GLOB_PATTERN = re.compile(r"^(.+)\.(\d{5})\.[^.]+$")
 
+# <stem>.audio.m4a alongside the frame sequence — a fixed, predictable name
+# (not whatever the source container originally used) so share_sync.py's
+# PullByCodeWorker can reconstruct the blob name from just the stem the
+# same way it already does for frame filenames, without ever needing to
+# *list* what a share actually contains.
+AUDIO_FILENAME_SUFFIX = ".audio.m4a"
+
 
 def sequence_dir_for(video_path: Path) -> Path:
     """<video_root>/<stem>/ — same folder convention UkorePlayblast used to
@@ -113,12 +120,55 @@ def extract_sequence(
     return frame_count, fps
 
 
+def audio_path_for(sequence_dir: Path, stem: str) -> Path:
+    return sequence_dir / "{}{}".format(stem, AUDIO_FILENAME_SUFFIX)
+
+
+def has_audio_file(sequence_dir: Path, stem: str) -> bool:
+    path = audio_path_for(sequence_dir, stem)
+    return path.is_file() and path.stat().st_size > 0
+
+
+def extract_audio(ffmpeg_path: str, video_path: Path, output_dir: Path) -> Path | None:
+    """Extracts video_path's audio track (if it has one) to
+    <stem>.audio.m4a in output_dir, re-encoded to AAC so every source
+    codec lands in one predictable, widely-playable container/codec pair
+    (sequence_player.py plays it back via QMediaPlayer) rather than
+    stream-copying whatever the source happened to use. Most playblasts
+    are silent — that's not an error, just detected by no non-empty output
+    file existing afterward rather than a separate -i probe pass first,
+    same "best-effort, no dedicated error path for the common negative
+    case" style probe_fps already uses for fps."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = audio_path_for(output_dir, video_path.stem)
+    result = subprocess.run(
+        [ffmpeg_path, "-y", "-i", str(video_path), "-vn", "-acodec", "aac", "-b:a", "192k", str(output_path)],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size == 0:
+        _logger.debug(
+            "no audio stream extracted for %s (ffmpeg returncode=%s)", video_path, result.returncode
+        )
+        output_path.unlink(missing_ok=True)
+        return None
+    _logger.info("extracted audio track for %s -> %s", video_path, output_path)
+    return output_path
+
+
 def ensure_sequence(ffmpeg_path: str, video_path: Path, *, image_format: str = "png") -> Path:
     """The one function callers actually use — no-op if has_sequence() is
     already true (whether from a prior extraction or an old
     UkorePlayblast-written sequence predating 2026-08-20), else extracts.
-    Returns the sequence_dir either way."""
+    Also ensures the audio track is extracted alongside it (added
+    2026-08-21, no-op the same way once <stem>.audio.m4a already exists —
+    a silent video re-attempts this cheap probe on every call since there's
+    no persisted "already checked, no audio" marker, same trade-off
+    probe_fps already makes for fps). Returns the sequence_dir either way."""
     sequence_dir = sequence_dir_for(video_path)
     if not has_sequence(video_path):
         extract_sequence(ffmpeg_path, video_path, sequence_dir, image_format=image_format)
+    if not has_audio_file(sequence_dir, video_path.stem):
+        extract_audio(ffmpeg_path, video_path, sequence_dir)
     return sequence_dir

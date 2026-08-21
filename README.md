@@ -63,14 +63,6 @@ most of them irrelevant to any one task:
   `interface/`, and vice versa; where both sides need to agree on
   something (the video-root folder, the naming convention) it's
   duplicated deliberately rather than shared, see that folder's README.
-- [`bin/`](bin/README.md) — a bundled `ffmpeg.exe` (win64, ~145MB, GPL
-  static build), added 2026-08-21 so a fresh machine never needs to
-  install/configure ffmpeg itself just to Comment/Mark as Share/Send to
-  Discord — `core/video_compress.py::resolve_ffmpeg_path` uses it
-  automatically unless a Repository Setting > UkoreShot path is explicitly
-  configured. The one deliberately large binary in this repo's git
-  history from this point forward — see that README for source/version/
-  license/update instructions.
 - `manifest.json` / `plugin.py` / `__init__.py` — plugin entry point,
   stay at this top level: the host app's plugin loader
   (`core/extensibility/loader.py`'s `_load_one`) looks for both
@@ -138,7 +130,14 @@ actually draws on) is a lazily-extracted PNG sequence
 `comments.json` (`core/comment_store.py`). "Lazily" is load-bearing here —
 confirmed explicitly with the user: browsing the library never triggers an
 extraction; it only happens the first time Comment or Mark as Share is
-clicked for a given video.
+clicked for a given video. **Audio, added 2026-08-21**: that same lazy
+extraction also pulls the video's audio track (if it has one — most
+playblasts don't) into `<stem>.audio.m4a` alongside the frames
+(`core/video_sequence.py`'s `extract_audio`), which `interface/sequence_player.py`
+then plays back in sync with the frame sequence. Since Mark as Share
+uploads every file already sitting in the sequence folder, the audio track
+travels to the cloud (and back down on a pull-by-code) right along with
+the frames and `comments.json` — no separate upload step needed.
 
 "Mark as Share" (`interface/video_library_page.py`'s
 `pushButton_mark_as_share`) uploads that sequence + `comments.json` to
@@ -182,9 +181,13 @@ only use a bot you're fine with the whole studio effectively controlling.
 A video over the configured Max Upload Size (default 10MB, Discord's own
 un-boosted cap) is compressed with `ffmpeg` first
 (`core/video_compress.py`'s `compress_to_fit`, called from
-`interface/discord_send_worker.py`) — requires `ffmpeg` installed on
-whichever machine clicks the button; see Repository Setting > UkoreShot's
-Max Upload Size / ffmpeg Path fields.
+`interface/discord_send_worker.py`) — `ffmpeg` no longer needs to be
+manually installed anywhere: `resolve_ffmpeg_path` downloads a win64 build
+straight into UkoreHub's own cache dir automatically the first time it's
+needed on a given machine (see `core/README.md`'s `video_compress.py`
+entry), falling back to a PATH lookup only if that download fails; see
+Repository Setting > UkoreShot's Max Upload Size / ffmpeg Path fields for
+an explicit override.
 
 Editing a post's description/title/thumbnail after it's created
 (`/setdesc`, `/settitle`, `/thumbnail`) is **not** handled by UkoreHub at

@@ -377,6 +377,13 @@ class PlayerWidget(QWidget):
             self._current_color = QColor("#ff3b30")
             self._update_color_button()
             self.color_button.clicked.connect(self._on_pick_color)
+            # Middle mouse click on the canvas itself also opens the color
+            # panel, added 2026-08-21 per the user's own request — an
+            # alternative to reaching for the toolbar swatch without
+            # switching tools first. DrawOverlay only emits the signal
+            # (colorPickRequested); it doesn't import QColorDialog itself,
+            # same split every other toolbar-facing DrawOverlay signal uses.
+            self.draw_overlay.colorPickRequested.connect(self._on_pick_color)
 
             self.size_slider = QSlider(Qt.Horizontal)
             self.size_slider.setRange(_MIN_TOOL_SIZE, _MAX_TOOL_SIZE)
@@ -391,6 +398,22 @@ class PlayerWidget(QWidget):
             self.undo_button.clicked.connect(self.draw_overlay.undo)
             self.redo_button = QPushButton("Redo")
             self.redo_button.clicked.connect(self.draw_overlay.redo)
+            # Ctrl+Z / Ctrl+Shift+Z, added 2026-08-21 per the user's own
+            # request — the toolbar buttons already called
+            # draw_overlay.undo()/redo(), this just adds the keyboard
+            # shortcuts most users reach for first. Ctrl+Shift+Z
+            # specifically (not QKeySequence.Redo, which is Ctrl+Y on
+            # Windows) since that's the exact binding asked for.
+            # _is_typing()-guarded the same way the frame-step/play
+            # shortcuts below already are, so redoing while editing a
+            # keyframe comment table cell doesn't hijack that field's own
+            # native text-undo instead.
+            self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+            self._undo_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            self._undo_shortcut.activated.connect(self._undo_if_not_typing)
+            self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
+            self._redo_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            self._redo_shortcut.activated.connect(self._redo_if_not_typing)
             self.clear_button = QPushButton("Clear")
             self.clear_button.clicked.connect(self.draw_overlay.clear_frame)
 
@@ -408,8 +431,12 @@ class PlayerWidget(QWidget):
         # skipped while a text field has focus (goto_frame_spin's internal
         # line edit) via _is_typing() so typing those letters/space
         # doesn't hijack the cursor instead. Comment-jump ("Shift+A"/
-        # "Shift+D") and draw-tool shortcuts (Ctrl+Z, "1"-"4") are gone —
-        # this plugin has nothing left for them to act on.
+        # "Shift+D") lives in comment_editor.py instead (this widget has no
+        # keyframe table to jump between). Ctrl+Z/Ctrl+Shift+Z undo/redo are
+        # back (added 2026-08-21, see the show_edit_tools block above) now
+        # that draw_overlay.py is too — only the old "1"-"4" tool-switch
+        # shortcuts are still gone, since brush/eraser/text are no longer
+        # separate selectable tools at all (see DrawOverlay's own docstring).
         self._prev_frame_shortcut = QShortcut(QKeySequence(Qt.Key_A), self)
         self._prev_frame_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self._prev_frame_shortcut.activated.connect(lambda: self._step_frame_if_not_typing(-1))
@@ -615,6 +642,14 @@ class PlayerWidget(QWidget):
     def _toggle_play_if_not_typing(self) -> None:
         if not self._is_typing():
             self._on_play_clicked()
+
+    def _undo_if_not_typing(self) -> None:
+        if not self._is_typing():
+            self.draw_overlay.undo()
+
+    def _redo_if_not_typing(self) -> None:
+        if not self._is_typing():
+            self.draw_overlay.redo()
 
     # -- misc ---------------------------------------------------------
 

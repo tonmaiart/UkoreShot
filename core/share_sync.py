@@ -29,6 +29,7 @@ from PySide6.QtCore import QThread, Signal
 # so it has no reason to bypass the sanctioned plugin_api surface.
 from plugin_api import ConflictError
 from ukoreshot_plugin.core import comment_store
+from ukoreshot_plugin.core.video_sequence import audio_path_for
 
 _logger = logging.getLogger("UkoreShot.ShareSync")
 
@@ -48,7 +49,7 @@ def _write_temp_json(payload: dict) -> Path:
     return Path(handle.name)
 
 
-def push_pointer(cloud_sync, code: str, *, project_id: str, repo_id: str, video_stem: str, frame_count: int, image_format: str, fps: float) -> None:
+def push_pointer(cloud_sync, code: str, *, project_id: str, repo_id: str, video_stem: str, frame_count: int, image_format: str, fps: float, audio_format: str | None = None) -> None:
     payload = {
         "project_id": project_id,
         "repo_id": repo_id,
@@ -56,6 +57,7 @@ def push_pointer(cloud_sync, code: str, *, project_id: str, repo_id: str, video_
         "frame_count": frame_count,
         "image_format": image_format,
         "fps": fps,
+        "audio_format": audio_format,
     }
     temp_path = _write_temp_json(payload)
     try:
@@ -205,5 +207,17 @@ class PullByCodeWorker(QThread):
             _logger.exception("PullByCodeWorker: pull failed for code %s", self._code)
             self.failed.emit(str(exc))
             return
+        # Best-effort, separate from the try/except above: an older
+        # pointer pushed before audio support existed simply has no
+        # "audio_format" key (pointer.get returns None, nothing to pull),
+        # and a failed audio pull shouldn't fail the whole sync — the
+        # frames + comments already landed, which is what actually matters.
+        audio_format = pointer.get("audio_format")
+        if audio_format:
+            try:
+                audio_path = audio_path_for(sequence_dir, stem)
+                self._cloud_sync.pull("{}/{}".format(prefix, audio_path.name), audio_path)
+            except Exception:  # noqa: BLE001
+                _logger.warning("PullByCodeWorker: audio pull failed for code %s", self._code, exc_info=True)
         _logger.info("PullByCodeWorker: pull finished for %s", stem)
         self.succeeded.emit(stem)

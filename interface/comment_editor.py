@@ -31,6 +31,7 @@ list drives."""
 
 from __future__ import annotations
 
+import bisect
 import datetime
 import logging
 import uuid
@@ -236,15 +237,22 @@ class CommentEditor(QDialog):
                 # composer row instead, so it isn't duplicated here.
                 rows.append((frame_index, None))
 
+        # The composer row (always for whichever frame the player is
+        # currently on) used to be appended unconditionally last — fixed
+        # 2026-08-21 per the user's own request that the table always sort
+        # by keyframe: scrubbing to an earlier frame than whatever already
+        # had comments used to put its row at the very bottom instead of in
+        # numeric order. bisect_right places it after any existing rows for
+        # that same frame (reads as "the next new entry for this frame")
+        # while still keeping the whole table in ascending frame order.
+        insert_at = bisect.bisect_right([r[0] for r in rows], self._current_frame_index)
+        rows.insert(insert_at, (self._current_frame_index, None))
+
         self._suppress_item_changed = True
         self._suppress_selection_jump = True
-        self.table.setRowCount(len(rows) + 1)
+        self.table.setRowCount(len(rows))
         for row, (frame_index, comment) in enumerate(rows):
             self._set_row(row, frame_index, comment)
-        # Trailing composer row, always for whichever frame the player is
-        # currently on — double-click its Comment cell to add a(nother)
-        # comment there, even if that frame already has one or more.
-        self._set_row(len(rows), self._current_frame_index, None)
         self._suppress_item_changed = False
         self._suppress_selection_jump = False
 
