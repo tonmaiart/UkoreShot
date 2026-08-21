@@ -12,13 +12,22 @@ before ever constructing this dialog.
 Save Comment / Cancel Comment are dialog-level batch commit/discard —
 confirmed with the user this round, a real change from the old system's
 save-immediately-on-every-signal behavior (those buttons wouldn't otherwise
-make sense): every stroke/text-box/comment edit only mutates self._frames
-in memory while the dialog is open. Cancel simply closes without ever
-calling comment_store.save — the on-disk file is untouched. Save writes
+make sense): every stroke/comment edit only mutates self._frames in memory
+while the dialog is open. Cancel simply closes without ever calling
+comment_store.save — the on-disk file is untouched. Save writes
 self._frames back via comment_store.save, then — only if this video is
 already shared — pushes just the updated comments.json to the cloud via
 CommentSyncWorker (the incremental-sync-on-save behavior confirmed this
-round, distinct from Mark as Share's one-time full upload)."""
+round, distinct from Mark as Share's one-time full upload).
+
+**Table redesigned 2026-08-21** per the user's own request: row selection
+(clicking any row snaps the player to that frame, not just double-clicking
+the Comment cell — see _on_table_row_selected), Time column dropped,
+Author moved to the last column, and a frame with strokes but no text
+comment yet now still gets its own row (previously only frames with an
+actual comment appeared at all — see _refresh_table). Previous/Next
+Comment buttons (also Shift+A/Shift+D) jump between keyframes the same
+list drives."""
 
 from __future__ import annotations
 
@@ -28,8 +37,20 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QFile, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import QDialog, QGroupBox, QMenu, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QGroupBox,
+    QHBoxLayout,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
 from ukoreshot_plugin.core import comment_store
 from ukoreshot_plugin.core.share_sync import CommentSyncWorker
@@ -39,7 +60,7 @@ from ukoreshot_plugin.interface.player_widget import PlayerWidget
 _logger = logging.getLogger("UkoreShot.CommentEditor")
 
 _UI_FILE = Path(__file__).resolve().parent / "CommentEditor.ui"
-_COL_FRAME, _COL_AUTHOR, _COL_COMMENT, _COL_TIMESTAMP = range(4)
+_COL_FRAME, _COL_COMMENT, _COL_AUTHOR = range(3)
 
 
 class CommentEditor(QDialog):
@@ -55,6 +76,7 @@ class CommentEditor(QDialog):
         self._repo_id = repo_id
         self._sync_worker: CommentSyncWorker | None = None
         self._current_frame_index = 0
+        self._suppress_selection_jump = False
 
         data = comment_store.load(sequence_dir)
         # Working copy only — never written back except by Save (see the
@@ -76,6 +98,7 @@ class CommentEditor(QDialog):
 
         find = self.ui.findChild
         self.viewer_group: QGroupBox = find(QGroupBox, "groupBox_playblast_viewer")
+        self.comment_group: QGroupBox = find(QGroupBox, "groupBox")
         self.table: QTableWidget = find(QTableWidget, "tableWidget")
         self.save_button: QPushButton = find(QPushButton, "pushButton_save_comment")
         # objectName is "pushButton_2" in CommentEditor.ui, not
@@ -89,6 +112,7 @@ class CommentEditor(QDialog):
 
         for _name, _widget in [
             ("groupBox_playblast_viewer", self.viewer_group),
+            ("groupBox", self.comment_group),
             ("tableWidget", self.table),
             ("pushButton_save_comment", self.save_button),
             ("pushButton_2", self.cancel_button),
@@ -99,18 +123,36 @@ class CommentEditor(QDialog):
         self.player_widget = PlayerWidget(show_edit_tools=True)
         self.player_widget.frameIndexChanged.connect(self._on_frame_index_changed)
         self.player_widget.draw_overlay.strokesChanged.connect(self._on_strokes_changed)
-        self.player_widget.draw_overlay.textBoxesChanged.connect(self._on_text_boxes_changed)
         viewer_layout = QVBoxLayout(self.viewer_group)
         viewer_layout.setContentsMargins(4, 16, 4, 4)
         viewer_layout.addWidget(self.player_widget)
 
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Frame", "Author", "Comment", "Time"])
+        # Previous/Next Comment — added 2026-08-21, code-built (no matching
+        # widgets in CommentEditor.ui yet) into the "Keyframe Comment"
+        # groupbox's own layout, right below the table.
+        self.prev_comment_button = QPushButton("< Previous")
+        self.next_comment_button = QPushButton("Next >")
+        self.prev_comment_button.clicked.connect(self._on_prev_comment_clicked)
+        self.next_comment_button.clicked.connect(self._on_next_comment_clicked)
+        nav_row = QHBoxLayout()
+        nav_row.addWidget(self.prev_comment_button)
+        nav_row.addWidget(self.next_comment_button)
+        if self.comment_group is not None and self.comment_group.layout() is not None:
+            self.comment_group.layout().addLayout(nav_row, 1, 0)
+        self._prev_comment_shortcut = QShortcut(QKeySequence("Shift+A"), self)
+        self._prev_comment_shortcut.activated.connect(self._on_prev_comment_clicked)
+        self._next_comment_shortcut = QShortcut(QKeySequence("Shift+D"), self)
+        self._next_comment_shortcut.activated.connect(self._on_next_comment_clicked)
+
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Frame", "Comment", "Author"])
         self.table.setEditTriggers(QTableWidget.DoubleClicked)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         self.table.itemChanged.connect(self._on_table_item_changed)
-        self.table.itemDoubleClicked.connect(self._on_table_item_double_clicked)
+        self.table.itemSelectionChanged.connect(self._on_table_row_selected)
         self._suppress_item_changed = False
 
         self.save_button.clicked.connect(self._on_save_clicked)
@@ -130,13 +172,10 @@ class CommentEditor(QDialog):
         self._refresh_table()
 
     def _on_strokes_changed(self) -> None:
-        self._record_frame_change(strokes=self.player_widget.draw_overlay.current_strokes())
+        self._record_frame_change(self._current_frame_index, strokes=self.player_widget.draw_overlay.current_strokes())
 
-    def _on_text_boxes_changed(self) -> None:
-        self._record_frame_change(text_boxes=self.player_widget.draw_overlay.current_text_boxes())
-
-    def _record_frame_change(self, *, strokes=None, text_boxes=None, comments=None) -> None:
-        key = str(self._current_frame_index)
+    def _record_frame_change(self, frame_index: int, *, strokes=None, comments=None) -> None:
+        key = str(frame_index)
         entry = dict(self._frames.get(key, {}))
         if strokes is not None:
             serialized = [s.to_dict() for s in strokes]
@@ -144,11 +183,6 @@ class CommentEditor(QDialog):
                 entry["strokes"] = serialized
             else:
                 entry.pop("strokes", None)
-        if text_boxes is not None:
-            if text_boxes:
-                entry["text_boxes"] = text_boxes
-            else:
-                entry.pop("text_boxes", None)
         if comments is not None:
             if comments:
                 entry["comments"] = comments
@@ -158,63 +192,107 @@ class CommentEditor(QDialog):
             self._frames[key] = entry
         else:
             self._frames.pop(key, None)
-        if comments is not None:
-            self._refresh_table()
+        # A stroke edit changes whether this frame has its own row at all
+        # (see _refresh_table's "strokes but no comment yet" case) just as
+        # much as a comment edit does, so both refresh the list — confirmed
+        # with the user this round ("รายการก็จะงอกเพิ่ม" — the list should
+        # grow when there's drawing on a frame too, not just a comment).
+        self._refresh_table()
 
     # -- keyframe comment table ---------------------------------------------
 
-    def _refresh_table(self) -> None:
-        rows: list[tuple[int, dict]] = []
+    def _keyframe_indices(self) -> list[int]:
+        """Every frame with something saved (a comment, or just strokes) —
+        drives both the table's row set and Previous/Next Comment
+        navigation, so the two always agree on what counts as a
+        "keyframe"."""
+        indices = []
         for key, entry in self._frames.items():
-            for comment in entry.get("comments", []):
-                rows.append((int(key), comment))
-        rows.sort(key=lambda r: r[0])
+            if entry.get("comments") or entry.get("strokes"):
+                indices.append(int(key))
+        return sorted(indices)
+
+    def _refresh_table(self) -> None:
+        rows: list[tuple[int, dict | None]] = []
+        for frame_index in self._keyframe_indices():
+            entry = self._frames.get(str(frame_index), {})
+            comments = entry.get("comments", [])
+            if comments:
+                # Always listed, even for the current frame — the trailing
+                # composer row below is *additional* (a way to add one
+                # more comment to whatever's on screen now), never a
+                # replacement for comments a frame already has. Fixed
+                # 2026-08-21 after a real bug: the current frame's own
+                # comments were vanishing from the table the moment it
+                # became current, since the composer row used to stand in
+                # for it unconditionally.
+                for comment in comments:
+                    rows.append((frame_index, comment))
+            elif frame_index != self._current_frame_index:
+                # Has strokes but no text comment yet, and isn't the frame
+                # on screen right now — still shows up, per the user's own
+                # request, as a blank row you can type into. The current
+                # frame's own blank case is covered by the trailing
+                # composer row instead, so it isn't duplicated here.
+                rows.append((frame_index, None))
 
         self._suppress_item_changed = True
+        self._suppress_selection_jump = True
         self.table.setRowCount(len(rows) + 1)
         for row, (frame_index, comment) in enumerate(rows):
             self._set_row(row, frame_index, comment)
-        # Trailing blank row — double-click its Comment cell to add a new
-        # comment on whichever frame is currently loaded in the player.
-        blank_row = len(rows)
-        frame_item = QTableWidgetItem(str(self._current_frame_index))
-        frame_item.setFlags(frame_item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(blank_row, _COL_FRAME, frame_item)
-        author_item = QTableWidgetItem("")
-        author_item.setFlags(author_item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(blank_row, _COL_AUTHOR, author_item)
-        comment_item = QTableWidgetItem("")
-        comment_item.setData(Qt.UserRole, None)  # no comment id yet — new row
-        self.table.setItem(blank_row, _COL_COMMENT, comment_item)
-        timestamp_item = QTableWidgetItem("")
-        timestamp_item.setFlags(timestamp_item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(blank_row, _COL_TIMESTAMP, timestamp_item)
+        # Trailing composer row, always for whichever frame the player is
+        # currently on — double-click its Comment cell to add a(nother)
+        # comment there, even if that frame already has one or more.
+        self._set_row(len(rows), self._current_frame_index, None)
         self._suppress_item_changed = False
+        self._suppress_selection_jump = False
 
-    def _set_row(self, row: int, frame_index: int, comment: dict) -> None:
+    def _set_row(self, row: int, frame_index: int, comment: dict | None) -> None:
         frame_item = QTableWidgetItem(str(frame_index))
         frame_item.setData(Qt.UserRole + 1, frame_index)
         frame_item.setFlags(frame_item.flags() & ~Qt.ItemIsEditable)
         self.table.setItem(row, _COL_FRAME, frame_item)
-        author_item = QTableWidgetItem(comment.get("author", ""))
-        author_item.setFlags(author_item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(row, _COL_AUTHOR, author_item)
-        comment_item = QTableWidgetItem(comment.get("text", ""))
-        comment_item.setData(Qt.UserRole, comment.get("id"))
+
+        comment_item = QTableWidgetItem(comment.get("text", "") if comment else "")
+        comment_item.setData(Qt.UserRole, comment.get("id") if comment else None)
         comment_item.setData(Qt.UserRole + 1, frame_index)
         self.table.setItem(row, _COL_COMMENT, comment_item)
-        timestamp_item = QTableWidgetItem(comment.get("timestamp", ""))
-        timestamp_item.setFlags(timestamp_item.flags() & ~Qt.ItemIsEditable)
-        self.table.setItem(row, _COL_TIMESTAMP, timestamp_item)
 
-    def _on_table_item_double_clicked(self, item: QTableWidgetItem) -> None:
-        if item.column() != _COL_COMMENT:
+        author_item = QTableWidgetItem(comment.get("author", "") if comment else "")
+        author_item.setFlags(author_item.flags() & ~Qt.ItemIsEditable)
+        self.table.setItem(row, _COL_AUTHOR, author_item)
+
+    def _on_table_row_selected(self) -> None:
+        """Selecting any row (a single click anywhere in it, thanks to
+        SelectRows — not just double-clicking the Comment cell) snaps the
+        player to that row's frame — added 2026-08-21 per the user's own
+        request. Guarded during _refresh_table's own rebuild so repopulating
+        the table (which clears/re-lays-out selection) can't itself trigger
+        a jump."""
+        if self._suppress_selection_jump:
             return
-        # A double-click on an existing row jumps the player there first,
-        # so the frame being commented on is always the one visible.
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        item = self.table.item(row, _COL_FRAME)
+        if item is None:
+            return
         frame_index = item.data(Qt.UserRole + 1)
         if frame_index is not None and frame_index != self._current_frame_index:
             self.player_widget.jump_to_frame(frame_index)
+
+    def _on_prev_comment_clicked(self) -> None:
+        indices = self._keyframe_indices()
+        earlier = [i for i in indices if i < self._current_frame_index]
+        if earlier:
+            self.player_widget.jump_to_frame(earlier[-1])
+
+    def _on_next_comment_clicked(self) -> None:
+        indices = self._keyframe_indices()
+        later = [i for i in indices if i > self._current_frame_index]
+        if later:
+            self.player_widget.jump_to_frame(later[0])
 
     def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._suppress_item_changed or item.column() != _COL_COMMENT:
@@ -237,16 +315,14 @@ class CommentEditor(QDialog):
                     "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                 }
             )
-            self._save_comments_for_frame(frame_index, comments)
+            self._record_frame_change(frame_index, comments=comments)
         else:
             comments = list(self._frames.get(str(frame_index), {}).get("comments", []))
             for comment in comments:
                 if comment.get("id") == comment_id:
                     comment["text"] = text
                     break
-            self._save_comments_for_frame(frame_index, comments)
-
-        self._refresh_table()
+            self._record_frame_change(frame_index, comments=comments)
 
     def _on_table_context_menu(self, pos) -> None:
         item = self.table.itemAt(pos)
@@ -264,14 +340,7 @@ class CommentEditor(QDialog):
             comments = [
                 c for c in self._frames.get(str(frame_index), {}).get("comments", []) if c.get("id") != comment_id
             ]
-            self._save_comments_for_frame(frame_index, comments)
-            self._refresh_table()
-
-    def _save_comments_for_frame(self, frame_index: int, comments: list[dict]) -> None:
-        original_current = self._current_frame_index
-        self._current_frame_index = frame_index
-        self._record_frame_change(comments=comments)
-        self._current_frame_index = original_current
+            self._record_frame_change(frame_index, comments=comments)
 
     # -- save / cancel --------------------------------------------------------
 

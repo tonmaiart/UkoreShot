@@ -8,7 +8,6 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QKeySequen
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoSink
 from PySide6.QtWidgets import (
     QApplication,
-    QButtonGroup,
     QColorDialog,
     QHBoxLayout,
     QLabel,
@@ -23,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ukoreshot_plugin.interface.draw_overlay import TOOL_BRUSH, TOOL_ERASER, TOOL_SELECT, TOOL_TEXT, DrawOverlay
+from ukoreshot_plugin.interface.draw_overlay import DrawOverlay
 from ukoreshot_plugin.interface.sequence_player import SequencePlayer
 
 _logger = logging.getLogger("UkoreShot.Player")
@@ -359,33 +358,19 @@ class PlayerWidget(QWidget):
 
         # -- edit toolbar (show_edit_tools only) -----------------------------
         # Revived 2026-08-20 from the pre-2026-08-08 show_edit_tools=True
-        # branch (see draw_overlay.py's own revival) — brush/eraser/text/
-        # select tool buttons, a color swatch, a size slider, undo/redo,
-        # and Clear, all driving self.draw_overlay directly.
+        # branch (see draw_overlay.py's own revival), then simplified
+        # 2026-08-21 per the user's own request: brush/eraser are no longer
+        # separate toolbar tools — left-click always draws, right-click
+        # always erases (see DrawOverlay.mousePressEvent) — and the Text
+        # tool is gone entirely. Only Select remains as an explicit toggle
+        # (a genuinely different interaction, not just a different mouse
+        # button), plus a color swatch, a size slider, undo/redo, and Clear.
         toolbar_row = None
         if show_edit_tools:
-            self.brush_button = QToolButton()
-            self.brush_button.setText("Brush")
-            self.eraser_button = QToolButton()
-            self.eraser_button.setText("Eraser")
-            self.text_button = QToolButton()
-            self.text_button.setText("Text")
             self.select_button = QToolButton()
             self.select_button.setText("Select")
-            self._tool_buttons = {
-                TOOL_BRUSH: self.brush_button,
-                TOOL_ERASER: self.eraser_button,
-                TOOL_TEXT: self.text_button,
-                TOOL_SELECT: self.select_button,
-            }
-            self._tool_button_group = QButtonGroup(self)
-            self._tool_button_group.setExclusive(True)
-            for tool, button in self._tool_buttons.items():
-                button.setCheckable(True)
-                self._tool_button_group.addButton(button)
-                button.clicked.connect(lambda checked, t=tool: self.draw_overlay.set_tool(t))
-            self.brush_button.setChecked(True)
-            self.draw_overlay.set_tool(TOOL_BRUSH)
+            self.select_button.setCheckable(True)
+            self.select_button.toggled.connect(self.draw_overlay.set_select_mode)
 
             self.color_button = QPushButton()
             self.color_button.setFixedSize(24, 24)
@@ -410,12 +395,9 @@ class PlayerWidget(QWidget):
             self.clear_button.clicked.connect(self.draw_overlay.clear_frame)
 
             toolbar_row = QHBoxLayout()
-            toolbar_row.addWidget(self.brush_button)
-            toolbar_row.addWidget(self.eraser_button)
-            toolbar_row.addWidget(self.text_button)
             toolbar_row.addWidget(self.select_button)
             toolbar_row.addWidget(self.color_button)
-            toolbar_row.addWidget(QLabel("Size"))
+            toolbar_row.addWidget(QLabel("Size (scroll to adjust)"))
             toolbar_row.addWidget(self.size_slider)
             toolbar_row.addStretch()
             toolbar_row.addWidget(self.undo_button)
