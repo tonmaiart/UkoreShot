@@ -121,9 +121,18 @@ class CommentEditor(QDialog):
         self.setWindowTitle("Comment - {}".format(sequence_dir.name))
         # A bare QDialog has no Maximize button by default — add it (and
         # Minimize, its usual pair) so the window can actually be maximized,
-        # not just start that way.
+        # not just start that way. setWindowState(Maximized) is deliberately
+        # NOT called here — fixed 2026-08-21 after a real crash:
+        # WindowMaximized fires a synchronous resizeEvent() immediately,
+        # and this class's own resizeEvent() override (below) touches
+        # self.table, which doesn't exist yet this early in __init__ —
+        # AttributeError, silently swallowed by Qt's C++/Python boundary
+        # (PySide reports it as "Error calling Python override of
+        # QDialog::resizeEvent()" and the dialog never finishes
+        # constructing, which looked like "clicking Edit Comment does
+        # nothing" from the outside). Maximizing now happens at the very
+        # end of __init__ instead, once every widget it could touch exists.
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint)
-        self.setWindowState(Qt.WindowMaximized)
 
         self._sequence_dir = sequence_dir
         self._api = api
@@ -251,6 +260,9 @@ class CommentEditor(QDialog):
 
         self.player_widget.load_sequence(sequence_dir)
         self._refresh_table()
+        # Starts maximized — moved here, after everything above exists, see
+        # the note by the window-flags line earlier in __init__.
+        self.setWindowState(Qt.WindowMaximized)
         _logger.info("CommentEditor.__init__ finished (%d frame(s) with saved data)", len(self._frames))
 
     def resizeEvent(self, event) -> None:
@@ -258,8 +270,16 @@ class CommentEditor(QDialog):
         self._apply_frame_column_width()
 
     def _apply_frame_column_width(self) -> None:
-        width = self.table.viewport().width()
-        self.table.setColumnWidth(_COL_FRAME, max(32, int(width * _FRAME_COLUMN_WIDTH_FRACTION)))
+        # Guards against resizeEvent() firing before self.table exists —
+        # see the __init__ note on why WindowMaximized moved to the end.
+        # Kept as a second line of defense even with that fix in place,
+        # since any future setWindowState/setGeometry call added earlier in
+        # __init__ could reintroduce the exact same crash otherwise.
+        table = getattr(self, "table", None)
+        if table is None:
+            return
+        width = table.viewport().width()
+        table.setColumnWidth(_COL_FRAME, max(32, int(width * _FRAME_COLUMN_WIDTH_FRACTION)))
 
     def _on_playing_changed(self, playing: bool) -> None:
         PlayerWidget._set_button_icon(self.play_button, _PAUSE_ICON_PATH if playing else _PLAY_ICON_PATH, "Pause" if playing else "Play")
