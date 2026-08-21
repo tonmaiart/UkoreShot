@@ -20,8 +20,10 @@ from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -49,6 +51,8 @@ _MAX_EXPORT_BYTES = 20 * 1024 * 1024
 # This plugin's own images/ folder — see player_widget.py's own _ICONS_DIR
 # note for why (not the shared data/icons/ every other plugin uses).
 _ICONS_DIR = Path(__file__).resolve().parent.parent / "images"
+_SHARE_ICON_PATH = _ICONS_DIR / "share.png"
+_SHARE_ICON_SIZE = QSize(20, 20)
 
 _COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_DATE, _COL_TIME_AGO = range(5)
 
@@ -145,7 +149,26 @@ class UkoreShotPage(QWidget):
     both just generate a local .mp4 (hard-capped at 20MB) into a
     cache-only export folder that's never touched by cloud sync, and
     reveal+select it in Explorer — see _on_get_video_clicked/
-    _on_get_video_commented_clicked below."""
+    _on_get_video_commented_clicked below.
+
+    **Shared status is an icon, not text, as of 2026-08-21** — share.png
+    via a small QLabel cell widget (_make_shared_cell_widget), not
+    item.setIcon(), since the table's own iconSize (_ICON_SIZE, the large
+    thumbnail size) applies to every item icon in the view uniformly and
+    would blow a status icon up to thumbnail size too.
+
+    **widget_status_loading (label_loading + progressBar), same day**: a
+    generic busy indicator (_show_status/_set_status_message/_hide_status)
+    shown around every long-running operation this page runs — sequence
+    extraction, Get Video/Commented, Mark as Share's upload, pull-by-code,
+    ffmpeg resolution/download. The bar is always indeterminate (no real
+    percentage reported by any of these today). The synchronous ones
+    (extraction, compression, ffmpeg download) still block this thread
+    while they run, same as before — QApplication.processEvents() in
+    _show_status/_set_status_message just forces the label/bar to actually
+    repaint immediately before that blocking call starts, rather than only
+    becoming visible once the whole operation (and the paint events queued
+    behind it) has already finished."""
 
     def __init__(self, parent=None, *, api):
         super().__init__(parent)
@@ -201,6 +224,14 @@ class UkoreShotPage(QWidget):
         # but left unwired — its intended behavior (toggle what, exactly?)
         # hasn't been specified yet; ask before building it.
         self.show_comment_toggle_button: QPushButton = find(QPushButton, "pushButton_show_comment_toggle")
+        # Generic busy indicator, added 2026-08-21 — shown/hidden around
+        # every long-running operation this page runs (sequence extraction,
+        # Get Video/Commented, Mark as Share upload, pull-by-code, ffmpeg
+        # resolution/download); see _show_status/_set_status_message/
+        # _hide_status below.
+        self.status_widget: QWidget = find(QWidget, "widget_status_loading")
+        self.status_label: QLabel = find(QLabel, "label_loading")
+        self.status_progress: QProgressBar = find(QProgressBar, "progressBar")
 
         for _name, _widget in [
             ("groupBox_playblast_viewer", self.viewer_group),
@@ -223,9 +254,14 @@ class UkoreShotPage(QWidget):
             ("comboBox_speed", self.speed_combo),
             ("lineEdit_keyframe", self.keyframe_edit),
             ("pushButton_show_comment_toggle", self.show_comment_toggle_button),
+            ("widget_status_loading", self.status_widget),
+            ("label_loading", self.status_label),
+            ("progressBar", self.status_progress),
         ]:
             if _widget is None:
                 _logger.error("UkoreShotPage.ui has no widget named %r — findChild returned None", _name)
+        if self.status_widget is not None:
+            self.status_widget.setVisible(False)
 
         # Player lives inside the .ui's own empty placeholder groupbox —
         # same "insert a real widget into a Designer-authored empty
@@ -356,9 +392,42 @@ class UkoreShotPage(QWidget):
     def _on_frame_index_changed(self, frame_index: int) -> None:
         self._current_frame_index = frame_index
 
+    # -- busy status (widget_status_loading) ---------------------------------
+
+    def _show_status(self, message: str) -> None:
+        """Shown by whichever click handler starts a long-running operation
+        (sequence extraction, Get Video/Commented, Mark as Share upload,
+        pull-by-code, ffmpeg resolution/download) — see _set_status_message
+        for the nested helpers (_resolve_ffmpeg, _ensure_sequence_for,
+        _render_commented_video) that update the message as the operation
+        progresses without re-triggering visibility. None of these
+        operations report a real percentage today, so the bar is always
+        indeterminate ("busy") rather than a true progress fraction."""
+        if self.status_widget is None:
+            return
+        self.status_label.setText(message)
+        self.status_progress.setRange(0, 0)
+        self.status_widget.setVisible(True)
+        # A synchronous ffmpeg/compress call blocks this thread right after
+        # this returns — force the label/bar to actually repaint first, or
+        # the user would never see them until the operation is already done.
+        QApplication.processEvents()
+
+    def _set_status_message(self, message: str) -> None:
+        if self.status_widget is None or not self.status_widget.isVisible():
+            return
+        self.status_label.setText(message)
+        QApplication.processEvents()
+
+    def _hide_status(self) -> None:
+        if self.status_widget is None:
+            return
+        self.status_widget.setVisible(False)
+
     # -- video list ---------------------------------------------------------
 
     def _resolve_ffmpeg(self) -> str | None:
+        self._set_status_message("Resolving ffmpeg...")
         try:
             path = video_sequence.resolve_ffmpeg_path(get_ffmpeg_path(self._api), self._api.cache_dir)
             _logger.debug("resolved ffmpeg path: %s", path)
@@ -438,6 +507,20 @@ class UkoreShotPage(QWidget):
             return sorted(entries, key=lambda e: e.mtime)
         return sorted(entries, key=lambda e: e.mtime, reverse=True)  # _SORT_NEWEST, the default
 
+    def _make_shared_cell_widget(self, is_shared: bool) -> QLabel:
+        """Shared column, added 2026-08-21 — an icon (share.png) instead of
+        the word "Shared" per the user's own request. Empty label (no
+        pixmap) for a not-yet-shared entry, matching the old "—" placeholder
+        without needing a second icon asset."""
+        label = QLabel()
+        label.setAlignment(Qt.AlignCenter)
+        if is_shared and _SHARE_ICON_PATH.is_file():
+            pixmap = QPixmap(str(_SHARE_ICON_PATH)).scaled(
+                _SHARE_ICON_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            label.setPixmap(pixmap)
+        return label
+
     def _apply_filter(self) -> None:
         search = self.search_edit.text().strip()
         entries = [e for e in self._entries_by_key.values() if _wildcard_match(search, e.stem)]
@@ -449,8 +532,13 @@ class UkoreShotPage(QWidget):
             name_item.setData(Qt.UserRole, entry.key)
             self.table.setItem(row, _COL_THUMBNAIL, QTableWidgetItem())
             self.table.setItem(row, _COL_NAME, name_item)
-            shared_item = QTableWidgetItem("Shared" if entry.share_state["is_shared"] else "—")
-            self.table.setItem(row, _COL_SHARED, shared_item)
+            self.table.setItem(row, _COL_SHARED, QTableWidgetItem())
+            # A cell widget, not item.setIcon() — the table's own iconSize
+            # (_ICON_SIZE, the large thumbnail size) applies to every
+            # QTableWidgetItem icon in the view uniformly, which would blow
+            # this up to thumbnail size too; a small QLabel here renders at
+            # whatever size it's actually given instead.
+            self.table.setCellWidget(row, _COL_SHARED, self._make_shared_cell_widget(entry.share_state["is_shared"]))
             date_text = datetime.datetime.fromtimestamp(entry.mtime).strftime("%Y-%m-%d %H:%M")
             self.table.setItem(row, _COL_DATE, QTableWidgetItem(date_text))
             self.table.setItem(row, _COL_TIME_AGO, QTableWidgetItem(_format_time_ago(entry.mtime)))
@@ -574,6 +662,7 @@ class UkoreShotPage(QWidget):
             return
         _logger.info("pulling shared video for code %s", text)
         self.search_edit.setEnabled(False)
+        self._show_status("Pulling shared video...")
         worker = PullByCodeWorker(self._api.cloud_sync, text, video_root=self._video_root, parent=self)
         worker.succeeded.connect(self._on_pull_by_code_succeeded)
         worker.not_found.connect(self._on_pull_by_code_not_found)
@@ -585,6 +674,7 @@ class UkoreShotPage(QWidget):
     def _on_pull_by_code_succeeded(self, stem: str) -> None:
         self._pull_worker = None
         self.search_edit.setEnabled(True)
+        self._hide_status()
         _logger.info("pull by code succeeded: %s", stem)
         self._reload_videos()
         QMessageBox.information(self, "Video Synced", "Pulled \"{}\" down from the cloud.".format(stem))
@@ -592,12 +682,14 @@ class UkoreShotPage(QWidget):
     def _on_pull_by_code_not_found(self) -> None:
         self._pull_worker = None
         self.search_edit.setEnabled(True)
+        self._hide_status()
         _logger.info("pull by code: no such share code")
         QMessageBox.warning(self, "Not Found", "No shared video was found for that code.")
 
     def _on_pull_by_code_failed(self, message: str) -> None:
         self._pull_worker = None
         self.search_edit.setEnabled(True)
+        self._hide_status()
         _logger.warning("pull by code failed: %s", message)
         QMessageBox.warning(self, "Sync Failed", message)
 
@@ -619,6 +711,7 @@ class UkoreShotPage(QWidget):
                 return None
         try:
             _logger.info("extracting sequence for %s", entry.video_path)
+            self._set_status_message("Extracting frames...")
             sequence_dir = video_sequence.ensure_sequence(ffmpeg_path, entry.video_path)
             _logger.info("sequence ready at %s", sequence_dir)
             return sequence_dir
@@ -632,7 +725,11 @@ class UkoreShotPage(QWidget):
         if entry is None:
             _logger.debug("Comment clicked with no selection")
             return
-        sequence_dir = self._ensure_sequence_for(entry)
+        self._show_status("Preparing sequence...")
+        try:
+            sequence_dir = self._ensure_sequence_for(entry)
+        finally:
+            self._hide_status()
         if sequence_dir is None:
             return
         _logger.info("opening CommentEditor for %s", sequence_dir)
@@ -676,6 +773,12 @@ class UkoreShotPage(QWidget):
                 "generated for it.",
             )
             return
+        # Shown here, through the async upload below — hidden in
+        # _on_share_upload_succeeded/_failed instead of a finally in this
+        # method, since the upload continues after this method returns.
+        # Every early return between here and worker.start() must hide it
+        # itself first.
+        self._show_status("Preparing to share...")
         ffmpeg_path = None
         if entry.video_path is not None and not video_sequence.has_sequence(entry.video_path):
             # Only need ffmpeg resolvable when an extraction is actually
@@ -685,9 +788,11 @@ class UkoreShotPage(QWidget):
             # below, not just extraction).
             ffmpeg_path = self._resolve_ffmpeg()
             if ffmpeg_path is None:
+                self._hide_status()
                 return
         sequence_dir = self._ensure_sequence_for(entry, ffmpeg_path)
         if sequence_dir is None:
+            self._hide_status()
             return
 
         # Write the final share state (code, frame_count, fps, ...) into
@@ -727,6 +832,7 @@ class UkoreShotPage(QWidget):
 
         _logger.info("Mark as Share: uploading %s (code=%s, %d frame(s))", sequence_dir, code, len(frame_files))
         self.mark_as_share_button.setEnabled(False)
+        self._set_status_message("Uploading to cloud...")
         worker = ShareUploadWorker(
             self._api.cloud_sync, project_id=self._project_id, repo_id=self._repo_id, sequence_dir=sequence_dir, parent=self
         )
@@ -741,6 +847,7 @@ class UkoreShotPage(QWidget):
     def _on_share_upload_succeeded(self, code: str, sequence_dir: Path, frame_count: int, image_format: str, fps: float, audio_format: str | None) -> None:
         self._share_worker = None
         self.mark_as_share_button.setEnabled(True)
+        self._hide_status()
         _logger.info("Mark as Share: upload succeeded for %s, pushing pointer", sequence_dir)
         # Only made discoverable now that every frame + the final
         # comments.json (already carrying this same share info) has
@@ -763,6 +870,7 @@ class UkoreShotPage(QWidget):
     def _on_share_upload_failed(self, message: str, sequence_dir: Path, *, was_already_shared: bool) -> None:
         self._share_worker = None
         self.mark_as_share_button.setEnabled(True)
+        self._hide_status()
         _logger.warning("Mark as Share: upload failed for %s: %s", sequence_dir, message)
         if not was_already_shared:
             # Roll back the optimistic is_shared=True set before the upload
@@ -794,21 +902,25 @@ class UkoreShotPage(QWidget):
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None or entry.video_path is None or self._project_id is None or self._repo_id is None:
             return
-        ffmpeg_path = self._resolve_ffmpeg()
-        if ffmpeg_path is None:
-            return
-        export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
-        output_path = export_dir / "{}.mp4".format(entry.stem)
+        self._show_status("Compressing video...")
         try:
-            result_path = compress_to_fit(ffmpeg_path, entry.video_path, _MAX_EXPORT_BYTES)
-        except VideoCompressionError as exc:
-            _logger.warning("Get Video failed for %s: %s", entry.video_path, exc)
-            QMessageBox.warning(self, "Get Video Failed", str(exc))
-            return
-        shutil.copy2(result_path, output_path)
-        if result_path != entry.video_path:
-            shutil.rmtree(result_path.parent, ignore_errors=True)
-        _logger.info("Get Video: wrote %s", output_path)
+            ffmpeg_path = self._resolve_ffmpeg()
+            if ffmpeg_path is None:
+                return
+            export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
+            output_path = export_dir / "{}.mp4".format(entry.stem)
+            try:
+                result_path = compress_to_fit(ffmpeg_path, entry.video_path, _MAX_EXPORT_BYTES)
+            except VideoCompressionError as exc:
+                _logger.warning("Get Video failed for %s: %s", entry.video_path, exc)
+                QMessageBox.warning(self, "Get Video Failed", str(exc))
+                return
+            shutil.copy2(result_path, output_path)
+            if result_path != entry.video_path:
+                shutil.rmtree(result_path.parent, ignore_errors=True)
+            _logger.info("Get Video: wrote %s", output_path)
+        finally:
+            self._hide_status()
         _reveal_and_select_in_explorer(output_path)
 
     def _on_get_video_commented_clicked(self) -> None:
@@ -819,21 +931,25 @@ class UkoreShotPage(QWidget):
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None or self._project_id is None or self._repo_id is None:
             return
-        sequence_dir = self._ensure_sequence_for(entry)
-        if sequence_dir is None:
-            return
-        ffmpeg_path = self._resolve_ffmpeg()
-        if ffmpeg_path is None:
-            return
-        export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
-        output_path = export_dir / "{}_commented.mp4".format(entry.stem)
+        self._show_status("Preparing sequence...")
         try:
-            self._render_commented_video(ffmpeg_path, sequence_dir, output_path)
-        except VideoCompressionError as exc:
-            _logger.warning("Get Video - Commented failed for %s: %s", sequence_dir, exc)
-            QMessageBox.warning(self, "Get Video - Commented Failed", str(exc))
-            return
-        _logger.info("Get Video - Commented: wrote %s", output_path)
+            sequence_dir = self._ensure_sequence_for(entry)
+            if sequence_dir is None:
+                return
+            ffmpeg_path = self._resolve_ffmpeg()
+            if ffmpeg_path is None:
+                return
+            export_dir = video_path_store.resolve_export_dir(self._api, self._project_id, self._repo_id)
+            output_path = export_dir / "{}_commented.mp4".format(entry.stem)
+            try:
+                self._render_commented_video(ffmpeg_path, sequence_dir, output_path)
+            except VideoCompressionError as exc:
+                _logger.warning("Get Video - Commented failed for %s: %s", sequence_dir, exc)
+                QMessageBox.warning(self, "Get Video - Commented Failed", str(exc))
+                return
+            _logger.info("Get Video - Commented: wrote %s", output_path)
+        finally:
+            self._hide_status()
         _reveal_and_select_in_explorer(output_path)
 
     def _render_commented_video(self, ffmpeg_path: str, sequence_dir: Path, output_path: Path) -> None:
@@ -848,6 +964,7 @@ class UkoreShotPage(QWidget):
 
         render_dir = Path(tempfile.mkdtemp(prefix="ukorehub_commented_"))
         try:
+            self._set_status_message("Compositing frames...")
             # comment_store.json keys strokes by the same 0-based sorted
             # position sequence_player.py uses as its own frame_index — see
             # that file's frame_paths[current_frame_index] lookup.
@@ -871,6 +988,7 @@ class UkoreShotPage(QWidget):
 
             audio_path = video_sequence.audio_path_for(sequence_dir, sequence_dir.name)
             temp_output = render_dir / "rendered.mp4"
+            self._set_status_message("Encoding video...")
             video_sequence.encode_sequence_to_video(
                 ffmpeg_path,
                 render_dir / "frame.%05d.png",
@@ -878,6 +996,7 @@ class UkoreShotPage(QWidget):
                 temp_output,
                 audio_path=audio_path if audio_path.is_file() else None,
             )
+            self._set_status_message("Compressing video...")
             final_path = compress_to_fit(ffmpeg_path, temp_output, _MAX_EXPORT_BYTES)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(final_path, output_path)
