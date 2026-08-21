@@ -425,7 +425,7 @@ p, li { white-space: pre-wrap; }
       <property name="bottomMargin">
        <number>20</number>
       </property>
-      <item row="0" column="2">
+      <item row="0" column="3">
        <widget class="QPushButton" name="pushButton_2">
         <property name="minimumSize">
          <size>
@@ -445,7 +445,20 @@ p, li { white-space: pre-wrap; }
         </property>
        </widget>
       </item>
-      <item row="0" column="3">
+      <item row="0" column="1">
+       <spacer name="horizontalSpacer_2">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>398</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item row="0" column="2">
        <widget class="QPushButton" name="pushButton_save_comment">
         <property name="minimumSize">
          <size>
@@ -464,19 +477,6 @@ p, li { white-space: pre-wrap; }
          <string>Save and Close</string>
         </property>
        </widget>
-      </item>
-      <item row="0" column="1">
-       <spacer name="horizontalSpacer_2">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>398</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
       </item>
      </layout>
     </widget>
