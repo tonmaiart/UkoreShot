@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QGroupBox,
     QHeaderView,
     QLineEdit,
@@ -155,6 +157,7 @@ class UkoreShotPage(QWidget):
         self._entries_by_key: dict[str, _LibraryEntry] = {}
         self._selected_key: str | None = None
         self._sort_mode = _DEFAULT_SORT
+        self._current_frame_index = 0
         self._share_worker: ShareUploadWorker | None = None
         self._pull_worker: PullByCodeWorker | None = None
         self._thumbnail_loader = ThumbnailLoader(self)
@@ -187,6 +190,17 @@ class UkoreShotPage(QWidget):
         self.copy_clipboard_button: QPushButton = find(QPushButton, "pushButton_copy_clipboard")
         self.get_video_button: QPushButton = find(QPushButton, "pushButton_get_video")
         self.get_video_commented_button: QPushButton = find(QPushButton, "pushButton_get_video_commented")
+        self.prev_frame_button: QPushButton = find(QPushButton, "pushButton_previous_frame")
+        self.play_button: QPushButton = find(QPushButton, "pushButton_play")
+        self.next_frame_button: QPushButton = find(QPushButton, "pushButton_next_frame")
+        self.prev_comment_button: QPushButton = find(QPushButton, "pushButton_previous_comment")
+        self.next_comment_button: QPushButton = find(QPushButton, "pushButton_next_comment")
+        self.speed_combo: QComboBox = find(QComboBox, "comboBox_speed")
+        self.keyframe_edit: QLineEdit = find(QLineEdit, "lineEdit_keyframe")
+        # Found so a missing-widget error still logs if it's ever removed,
+        # but left unwired — its intended behavior (toggle what, exactly?)
+        # hasn't been specified yet; ask before building it.
+        self.show_comment_toggle_button: QPushButton = find(QPushButton, "pushButton_show_comment_toggle")
 
         for _name, _widget in [
             ("groupBox_playblast_viewer", self.viewer_group),
@@ -201,6 +215,14 @@ class UkoreShotPage(QWidget):
             ("pushButton_copy_clipboard", self.copy_clipboard_button),
             ("pushButton_get_video", self.get_video_button),
             ("pushButton_get_video_commented", self.get_video_commented_button),
+            ("pushButton_previous_frame", self.prev_frame_button),
+            ("pushButton_play", self.play_button),
+            ("pushButton_next_frame", self.next_frame_button),
+            ("pushButton_previous_comment", self.prev_comment_button),
+            ("pushButton_next_comment", self.next_comment_button),
+            ("comboBox_speed", self.speed_combo),
+            ("lineEdit_keyframe", self.keyframe_edit),
+            ("pushButton_show_comment_toggle", self.show_comment_toggle_button),
         ]:
             if _widget is None:
                 _logger.error("UkoreShotPage.ui has no widget named %r — findChild returned None", _name)
@@ -209,10 +231,36 @@ class UkoreShotPage(QWidget):
         # same "insert a real widget into a Designer-authored empty
         # QGroupBox at runtime" convention groupBox_playblast_viewer in
         # comment_editor.py's CommentEditor.ui also uses.
-        self.player_widget = PlayerWidget()
+        # own_transport_controls=False: this .ui now supplies its own
+        # prev/play/next-frame, lineEdit_keyframe, and comboBox_speed (see
+        # below) instead of PlayerWidget building duplicate ones in code.
+        self.player_widget = PlayerWidget(own_transport_controls=False)
+        self.player_widget.playingChanged.connect(self._on_playing_changed)
+        self.player_widget.frameIndexChanged.connect(self._on_frame_index_changed)
         viewer_layout = QVBoxLayout(self.viewer_group)
         viewer_layout.setContentsMargins(4, 16, 4, 4)
         viewer_layout.addWidget(self.player_widget)
+
+        PlayerWidget._set_button_icon(self.prev_frame_button, _ICONS_DIR / "icons8-chevron-left-26.png", "<")
+        PlayerWidget._set_button_icon(self.play_button, _ICONS_DIR / "icons8-play-50.png", "Play")
+        PlayerWidget._set_button_icon(self.next_frame_button, _ICONS_DIR / "icons8-right-26.png", ">")
+        PlayerWidget._set_button_icon(self.prev_comment_button, _ICONS_DIR / "prev_comment.png", "< Comment")
+        PlayerWidget._set_button_icon(self.next_comment_button, _ICONS_DIR / "next_comment.png", "Comment >")
+        self.prev_frame_button.clicked.connect(lambda: self.player_widget.step_frame(-1))
+        self.play_button.clicked.connect(self.player_widget.toggle_play)
+        self.next_frame_button.clicked.connect(lambda: self.player_widget.step_frame(1))
+        self.prev_comment_button.clicked.connect(self._on_prev_comment_clicked)
+        self.next_comment_button.clicked.connect(self._on_next_comment_clicked)
+
+        # 0.25x-1.00x discrete steps — comboBox_speed replaces the old
+        # continuous speed_slider for this page only (CommentEditor keeps
+        # its own slider, no .ui equivalent there).
+        self.speed_combo.addItems(["0.25x", "0.5x", "0.75x", "1.0x"])
+        self.speed_combo.setCurrentText("1.0x")
+        self.speed_combo.currentTextChanged.connect(self._on_speed_combo_changed)
+
+        self.keyframe_edit.setPlaceholderText("Frame")
+        self.keyframe_edit.returnPressed.connect(self._on_keyframe_edit_entered)
 
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["", "Name", "Shared", "Date", "Time Ago"])
@@ -253,6 +301,60 @@ class UkoreShotPage(QWidget):
         self._repo_id = repo.id if repo is not None else None
         _logger.info("set_repo(project_id=%s, repo_id=%s)", self._project_id, self._repo_id)
         self._reload_videos()
+
+    # -- transport row (own_transport_controls=False) -----------------------
+
+    def _on_playing_changed(self, playing: bool) -> None:
+        PlayerWidget._set_button_icon(
+            self.play_button,
+            _ICONS_DIR / "icons8-pause-50.png" if playing else _ICONS_DIR / "icons8-play-50.png",
+            "Pause" if playing else "Play",
+        )
+
+    def _on_speed_combo_changed(self, text: str) -> None:
+        try:
+            rate = float(text.rstrip("x"))
+        except ValueError:
+            return
+        self.player_widget.set_speed(rate)
+
+    def _on_keyframe_edit_entered(self) -> None:
+        try:
+            frame_index = int(self.keyframe_edit.text().strip())
+        except ValueError:
+            return
+        self.player_widget.jump_to_frame(frame_index)
+
+    def _selected_entry_keyframe_indices(self) -> list[int]:
+        """Frames with a saved comment or drawing for the currently
+        selected entry — read straight from comments.json, same "keyframe"
+        definition comment_editor.py's own _keyframe_indices uses. Safe to
+        call even when no sequence has been extracted yet for this entry
+        (comment_store.load returns empty frames for a nonexistent file/
+        directory) — Previous/Next Comment just has nothing to jump to."""
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        if entry is None:
+            return []
+        frames = comment_store.load(entry.sequence_dir)["frames"]
+        indices = [int(key) for key, data in frames.items() if data.get("comments") or data.get("strokes")]
+        return sorted(indices)
+
+    def _on_prev_comment_clicked(self) -> None:
+        indices = self._selected_entry_keyframe_indices()
+        if not indices:
+            return
+        earlier = [i for i in indices if i < self._current_frame_index]
+        self.player_widget.jump_to_frame(earlier[-1] if earlier else indices[-1])
+
+    def _on_next_comment_clicked(self) -> None:
+        indices = self._selected_entry_keyframe_indices()
+        if not indices:
+            return
+        later = [i for i in indices if i > self._current_frame_index]
+        self.player_widget.jump_to_frame(later[0] if later else indices[0])
+
+    def _on_frame_index_changed(self, frame_index: int) -> None:
+        self._current_frame_index = frame_index
 
     # -- video list ---------------------------------------------------------
 
@@ -418,6 +520,10 @@ class UkoreShotPage(QWidget):
         self._update_button_states()
 
     def _load_selected_entry(self) -> None:
+        # Reset before loading — otherwise Previous/Next Comment could
+        # briefly use the *previous* video's frame index if clicked before
+        # the new one's first frameIndexChanged arrives.
+        self._current_frame_index = 0
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None:
             self.player_widget.clear_video()
@@ -525,8 +631,24 @@ class UkoreShotPage(QWidget):
         if sequence_dir is None:
             return
         _logger.info("opening CommentEditor for %s", sequence_dir)
-        dialog = CommentEditor(sequence_dir, api=self._api, project_id=self._project_id, repo_id=self._repo_id, parent=self)
-        dialog.exec()
+        try:
+            dialog = CommentEditor(sequence_dir, api=self._api, project_id=self._project_id, repo_id=self._repo_id, parent=self)
+            dialog.exec()
+        except Exception:
+            # A crash inside CommentEditor's own __init__/exec used to fail
+            # completely silently — PySide6 just prints an uncaught slot
+            # exception to stderr/console and the click visibly does
+            # nothing, which is indistinguishable from "the button is
+            # broken" for anyone not watching a console. Surface it instead
+            # (full traceback both logged and shown) so a real failure is
+            # never silent again.
+            _logger.exception("CommentEditor failed to open for %s", sequence_dir)
+            QMessageBox.critical(
+                self,
+                "Comment Editor Failed",
+                "Could not open the Comment Editor:\n\n{}".format(traceback.format_exc()),
+            )
+            return
         _logger.debug("CommentEditor closed")
         self._reload_videos()  # share state may have changed via an incremental sync during the session
 

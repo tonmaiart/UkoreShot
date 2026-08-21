@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>959</width>
-    <height>607</height>
+    <width>921</width>
+    <height>593</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -26,21 +26,8 @@
          <string>ประวัติการ Playblast ทั้งหมด</string>
         </property>
         <layout class="QGridLayout" name="gridLayout_3">
-         <item row="3" column="0">
+         <item row="2" column="0">
           <layout class="QHBoxLayout" name="horizontalLayout_3">
-           <item>
-            <spacer name="horizontalSpacer">
-             <property name="orientation">
-              <enum>Qt::Horizontal</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size>
-               <width>40</width>
-               <height>20</height>
-              </size>
-             </property>
-            </spacer>
-           </item>
            <item>
             <widget class="QPushButton" name="pushButton_sort_ascending">
              <property name="minimumSize">
@@ -95,42 +82,8 @@
              </property>
             </widget>
            </item>
-          </layout>
-         </item>
-         <item row="1" column="0">
-          <widget class="QLineEdit" name="lineEdit_search_bar">
-           <property name="minimumSize">
-            <size>
-             <width>0</width>
-             <height>30</height>
-            </size>
-           </property>
-           <property name="font">
-            <font>
-             <pointsize>10</pointsize>
-             <weight>75</weight>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="placeholderText">
-            <string>ค้นหาหรือกรอกรหัส Share</string>
-           </property>
-          </widget>
-         </item>
-         <item row="2" column="0">
-          <widget class="QTableWidget" name="tableWidget_playblast_library">
-           <property name="showGrid">
-            <bool>false</bool>
-           </property>
-           <attribute name="verticalHeaderVisible">
-            <bool>false</bool>
-           </attribute>
-          </widget>
-         </item>
-         <item row="0" column="0">
-          <layout class="QHBoxLayout" name="horizontalLayout_5">
            <item>
-            <spacer name="horizontalSpacer_3">
+            <spacer name="horizontalSpacer">
              <property name="orientation">
               <enum>Qt::Horizontal</enum>
              </property>
@@ -162,6 +115,36 @@
            </item>
           </layout>
          </item>
+         <item row="0" column="0">
+          <widget class="QLineEdit" name="lineEdit_search_bar">
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>30</height>
+            </size>
+           </property>
+           <property name="font">
+            <font>
+             <pointsize>10</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="placeholderText">
+            <string>ค้นหาหรือกรอกรหัส Share</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QTableWidget" name="tableWidget_playblast_library">
+           <property name="showGrid">
+            <bool>false</bool>
+           </property>
+           <attribute name="verticalHeaderVisible">
+            <bool>false</bool>
+           </attribute>
+          </widget>
+         </item>
         </layout>
        </widget>
       </item>
@@ -171,7 +154,7 @@
          <item row="0" column="0">
           <layout class="QVBoxLayout" name="verticalLayout_3">
            <item>
-            <layout class="QVBoxLayout" name="verticalLayout_2" stretch="10,0,0">
+            <layout class="QVBoxLayout" name="verticalLayout_2" stretch="10,0">
              <item>
               <widget class="QGroupBox" name="groupBox_playblast_viewer">
                <property name="title">
@@ -191,6 +174,32 @@
                  </property>
                  <property name="text">
                   <string/>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QComboBox" name="comboBox_speed">
+                 <property name="minimumSize">
+                  <size>
+                   <width>40</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLineEdit" name="lineEdit_keyframe">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>50</width>
+                   <height>16777215</height>
+                  </size>
                  </property>
                 </widget>
                </item>
@@ -293,20 +302,6 @@
                 </spacer>
                </item>
                <item>
-                <widget class="QComboBox" name="comboBox_speed">
-                 <property name="minimumSize">
-                  <size>
-                   <width>40</width>
-                   <height>30</height>
-                  </size>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </item>
-             <item>
-              <layout class="QHBoxLayout" name="horizontalLayout_2">
-               <item>
                 <widget class="QPushButton" name="pushButton_comment">
                  <property name="minimumSize">
                   <size>
@@ -320,7 +315,7 @@
                   </font>
                  </property>
                  <property name="text">
-                  <string>Edit Comment...</string>
+                  <string>Comment...</string>
                  </property>
                 </widget>
                </item>

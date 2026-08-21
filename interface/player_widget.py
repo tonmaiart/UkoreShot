@@ -222,18 +222,37 @@ class PlayerWidget(QWidget):
     `redo`/`clear_frame` are already public) and `playingChanged` lets the
     host keep its own play button's icon in sync. `select_button`/
     `color_button`/`size_slider` have no `.ui` equivalent and stay
-    code-built either way."""
+    code-built either way.
+
+    `own_transport_controls=False` is the same idea for `UkoreShotPage.ui`'s
+    own transport row (its own `pushButton_previous_frame`/`play`/
+    `next_frame`, `lineEdit_keyframe`, `comboBox_speed`) — independent of
+    `show_edit_tools`, since `UkoreShotPage` never sets that. `step_frame`/
+    `toggle_play`/`jump_to_frame`/`set_speed` are the public methods a page
+    in this mode wires its own widgets to."""
 
     playingChanged = Signal(bool)
     frameIndexChanged = Signal(int)
 
-    def __init__(self, parent=None, *, show_edit_tools: bool = False):
+    def __init__(self, parent=None, *, show_edit_tools: bool = False, own_transport_controls: bool = True):
         super().__init__(parent)
         self._video_path: Path | None = None
         self._scrubbing = False
         self._fps_value = _DEFAULT_FPS
         self._mode: str | None = None  # "video" | "sequence" | None
         self.show_edit_tools = show_edit_tools
+        # own_transport_controls=False — added for UkoreShotPage.ui's own
+        # transport row (pushButton_previous_frame/play/next_frame,
+        # lineEdit_keyframe, comboBox_speed), independent of show_edit_tools
+        # (which only ever gates the undo/redo/clear-frame + comment-nav
+        # skip, still exclusive to CommentEditor — see that flag's own
+        # note). When False, skips prev/play/next-frame *and*
+        # goto_frame_spin *and* speed_slider from this widget's own layout
+        # — the embedding page supplies all of those externally instead.
+        # The widget objects themselves are still built either way (still
+        # referenced internally, e.g. _set_paused_state's self.play_button),
+        # just never added to a shown layout.
+        self.own_transport_controls = own_transport_controls
 
         self.player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
@@ -309,21 +328,30 @@ class PlayerWidget(QWidget):
         slider_row.addWidget(self.end_frame_label)
 
         transport_row = QHBoxLayout()
-        if not show_edit_tools:
+        if own_transport_controls and not show_edit_tools:
             # In show_edit_tools mode, CommentEditor.ui already lays out its
             # own pushButton_previous_frame/play/next_frame right beside its
             # own Previous/Next Comment buttons — see the class docstring.
             # step_frame()/toggle_play() below are what CommentEditor wires
-            # those .ui buttons to instead.
+            # those .ui buttons to instead. own_transport_controls=False
+            # (UkoreShotPage.ui's own transport row) skips these the same
+            # way, independent of show_edit_tools.
             transport_row.addWidget(self.prev_frame_button)
             transport_row.addWidget(self.play_button)
             transport_row.addWidget(self.next_frame_button)
-        transport_row.addWidget(self.goto_frame_spin)
-        transport_row.addWidget(self.fps_label)
+        if own_transport_controls:
+            # goto_frame_spin/speed controls stay code-built even in
+            # show_edit_tools mode (CommentEditor.ui has no equivalent for
+            # either) — only own_transport_controls=False (UkoreShotPage.ui,
+            # which supplies lineEdit_keyframe/comboBox_speed instead) skips
+            # these.
+            transport_row.addWidget(self.goto_frame_spin)
+            transport_row.addWidget(self.fps_label)
         transport_row.addStretch()
-        transport_row.addWidget(QLabel("Speed"))
-        transport_row.addWidget(self.speed_slider)
-        transport_row.addWidget(self.speed_label)
+        if own_transport_controls:
+            transport_row.addWidget(QLabel("Speed"))
+            transport_row.addWidget(self.speed_slider)
+            transport_row.addWidget(self.speed_label)
 
         # -- edit toolbar (show_edit_tools only) -----------------------------
         # Revived 2026-08-20 from the pre-2026-08-08 show_edit_tools=True
@@ -499,6 +527,13 @@ class PlayerWidget(QWidget):
         pushButton_play calls this instead."""
         self._on_play_clicked()
 
+    def set_speed(self, rate: float) -> None:
+        """Public wrapper around _on_speed_changed's core logic (0.01-1.00)
+        — for a page supplying its own external speed control
+        (own_transport_controls=False) instead of this widget's own
+        speed_slider, e.g. UkoreShotPage.ui's comboBox_speed."""
+        self._on_speed_changed(round(rate * 100))
+
     def _fps(self):
         return self.sequence_player.fps if self._mode == "sequence" else self._fps_value
 
@@ -542,6 +577,13 @@ class PlayerWidget(QWidget):
         self.goto_frame_spin.blockSignals(True)
         self.goto_frame_spin.setValue(frame_index)
         self.goto_frame_spin.blockSignals(False)
+        # Video mode never emitted this before — only sequence mode
+        # (_on_sequence_frame) did. Needed so a page tracking "current
+        # frame index" (e.g. UkoreShotPage's Previous/Next Comment) works
+        # the same regardless of which mode is active; video mode's index
+        # is still the same FPS-based approximation used everywhere else
+        # in this class, not frame-exact.
+        self.frameIndexChanged.emit(frame_index)
 
     def jump_to_frame(self, frame_index: int) -> None:
         """Public wrapper around _jump_to_frame — comment_editor.py uses
