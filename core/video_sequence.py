@@ -71,18 +71,27 @@ def probe_fps(ffmpeg_path: str, video_path: Path) -> float:
 def extract_sequence(
     ffmpeg_path: str, video_path: Path, output_dir: Path, *, image_format: str = "png"
 ) -> tuple[int, float]:
-    """Runs ffmpeg -vsync 0 (one output file per source frame, no
-    duplicate/dropped-frame retiming) writing <stem>.%05d.<image_format>
-    into output_dir. Returns (frame_count, fps). Raises
-    VideoCompressionError (reused rather than a new exception type — same
-    "ffmpeg failed" shape video_compress.py already has a caller-facing
-    error class for) on failure or zero frames produced."""
+    """Runs ffmpeg with -fps_mode passthrough (one output file per source
+    frame, no duplicate/dropped-frame retiming) writing
+    <stem>.%05d.<image_format> into output_dir. Returns (frame_count, fps).
+    Raises VideoCompressionError (reused rather than a new exception type —
+    same "ffmpeg failed" shape video_compress.py already has a
+    caller-facing error class for) on failure or zero frames produced.
+
+    -fps_mode passthrough, not the older -vsync 0: a real "Unrecognized
+    option 'vsync'" failure against the bundled ffmpeg (bin/ffmpeg.exe, a
+    2026-08-20 build — see bin/README.md) showed the global -vsync flag has
+    been removed entirely in current ffmpeg; -fps_mode is the modern
+    per-output-stream replacement for the exact same "don't retime, one
+    output frame per input frame" behavior, stable since ffmpeg 5.1
+    (2022) so it works against an older configured/PATH ffmpeg too, not
+    just the bundled one."""
     _logger.info("extract_sequence: %s -> %s (ffmpeg=%s)", video_path, output_dir, ffmpeg_path)
     output_dir.mkdir(parents=True, exist_ok=True)
     fps = probe_fps(ffmpeg_path, video_path)
     pattern = output_dir / "{}.%05d.{}".format(video_path.stem, image_format)
     result = subprocess.run(
-        [ffmpeg_path, "-y", "-i", str(video_path), "-vsync", "0", str(pattern)],
+        [ffmpeg_path, "-y", "-i", str(video_path), "-fps_mode", "passthrough", str(pattern)],
         capture_output=True,
         text=True,
         timeout=600,
