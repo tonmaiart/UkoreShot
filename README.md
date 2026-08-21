@@ -185,7 +185,12 @@ sync with the frame sequence.
 `pushButton_mark_as_share`) uploads that sequence + `comments.json` to
 Cloudflare R2 via `api.cloud_sync` (`core/share_sync.py`'s
 `ShareUploadWorker`), then generates and persists a
-`{ShotCode}_v{version}_{4 hex chars}` code (`comment_store.generate_share_code`)
+`UKSHOT_{ShotCode}_v{version}_{4 hex chars}` code
+(`comment_store.generate_share_code` — the `UKSHOT_` prefix was added
+2026-08-21, per the user's own request, so a pasted code reads as
+unambiguously this plugin's own; a code generated before that change has
+no prefix and was never migrated to add one, it just keeps working as-is
+— `video_library_page.py`'s `_SHARE_CODE_PATTERN` matches both shapes)
 and pushes a small pointer blob (`share_sync.push_pointer`) that makes the
 code resolvable. "Copy Share Code" copies that code as plain text.
 
@@ -211,7 +216,9 @@ fresh Mark as Share for every comment.
 
 Added 2026-08-21: `pushButton_get_video`/`pushButton_get_video_commented`
 in `video_library_page.py` each generate a fresh, hard-capped-at-20MB
-`.mp4` on click, then reveal+select it in Windows Explorer
+`.mp4` on click, then show a single-button "Ok and Show me in explorer"
+dialog (`_notify_export_ready`, so Explorer popping open doesn't catch
+anyone off guard) before revealing+selecting it in Windows Explorer
 (`explorer /select,`). Get Video burns the frame number into every frame
 via ffmpeg's `drawtext` while *also* targeting `_MAX_EXPORT_BYTES` in that
 same single ffmpeg call (`core/video_compress.py`'s `burn_frame_numbers`,

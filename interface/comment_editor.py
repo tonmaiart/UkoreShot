@@ -183,9 +183,6 @@ class _EditCommentDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.text_edit.setFocus()
-        cursor = self.text_edit.textCursor()
-        cursor.movePosition(cursor.End)
-        self.text_edit.setTextCursor(cursor)
 
     def text(self) -> str:
         return self.text_edit.toPlainText()

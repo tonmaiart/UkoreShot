@@ -97,9 +97,17 @@ def set_share_state(sequence_dir: Path, **fields) -> None:
 
 
 def generate_share_code(shot_code: str, version: int) -> str:
-    """{ShotCode}_v{version}_{4-char code} — generated once on first Mark as
-    Share and persisted via set_share_state(code=...); never regenerated on
-    a later re-share of the same video. uuid.uuid4().hex[:4] is the same
-    "short random suffix" convention already used elsewhere in this
-    codebase (comment ids, options_store.py's variation sanitizing)."""
-    return "{}_v{:03d}_{}".format(shot_code, version, uuid.uuid4().hex[:4].upper())
+    """UKSHOT_{ShotCode}_v{version}_{4-char code} — generated once on first
+    Mark as Share and persisted via set_share_state(code=...); never
+    regenerated on a later re-share of the same video. uuid.uuid4().hex[:4]
+    is the same "short random suffix" convention already used elsewhere in
+    this codebase (comment ids, options_store.py's variation sanitizing).
+
+    "UKSHOT_" prefix added 2026-08-21, per the user's own request, to make
+    a pasted code unambiguously recognizable as one of this plugin's own
+    — codes generated before this change have no prefix at all, and stay
+    valid exactly as they were (never migrated/rewritten); see
+    video_library_page.py's _SHARE_CODE_PATTERN, which matches both the
+    old and new shapes so an already-shared pre-prefix code still resolves
+    when pasted into the search bar."""
+    return "UKSHOT_{}_v{:03d}_{}".format(shot_code, version, uuid.uuid4().hex[:4].upper())

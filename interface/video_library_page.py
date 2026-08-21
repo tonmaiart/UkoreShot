@@ -60,11 +60,14 @@ _SORT_NAME_ASC = "name_asc"
 _SORT_NEWEST = "newest"
 _DEFAULT_SORT = _SORT_NEWEST
 
-# Matches comment_store.generate_share_code's exact output shape
-# ({shot_code}_v{version:03d}_{4 hex chars}) — used by the search bar's
-# Enter-key handler to tell "someone pasted a share code" apart from a
-# plain wildcard search string, without needing a separate dedicated field.
-_SHARE_CODE_PATTERN = re.compile(r"^[A-Za-z0-9]+_v\d{3}_[0-9A-Fa-f]{4}$")
+# Matches comment_store.generate_share_code's output shape — used by the
+# search bar's Enter-key handler to tell "someone pasted a share code"
+# apart from a plain wildcard search string, without needing a separate
+# dedicated field. The leading "UKSHOT_" is optional so a code generated
+# before that prefix was added 2026-08-21 (see generate_share_code's own
+# docstring) still matches — old codes were never migrated/rewritten to
+# add it, they just keep working exactly as they were.
+_SHARE_CODE_PATTERN = re.compile(r"^(?:UKSHOT_)?[A-Za-z0-9]+_v\d{3}_[0-9A-Fa-f]{4}$")
 
 
 @dataclass
@@ -1053,6 +1056,22 @@ class UkoreShotPage(QWidget):
 
     # -- get video / get video - commented -----------------------------------
 
+    def _notify_export_ready(self, output_path: Path) -> None:
+        """Shown once Get Video/Get Video - Commented finishes, before
+        Explorer pops open — added 2026-08-21 per the user's own request,
+        so Explorer opening on top of the app doesn't catch anyone off
+        guard. Single button ("Ok and Show me in explorer" — there's no
+        second choice, so a plain Yes/No or OK/Cancel pair doesn't apply)
+        that both dismisses the dialog and triggers the reveal, same as
+        clicking OK would for a normal info box."""
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Information)
+        dialog.setWindowTitle("Export Complete")
+        dialog.setText("Saved: {}".format(output_path.name))
+        dialog.addButton("Ok and Show me in explorer", QMessageBox.AcceptRole)
+        dialog.exec()
+        _reveal_and_select_in_explorer(output_path)
+
     def _on_get_video_clicked(self) -> None:
         """Burns the current frame number into every frame (top-center,
         matching player_widget.py's own _FrameNumberOverlay HUD look) while
@@ -1089,7 +1108,7 @@ class UkoreShotPage(QWidget):
             _logger.info("Get Video: wrote %s", output_path)
         finally:
             self._hide_status()
-        _reveal_and_select_in_explorer(output_path)
+        self._notify_export_ready(output_path)
 
     def _on_get_video_commented_clicked(self) -> None:
         """Same 20MB-capped local export as Get Video above, but composites
@@ -1118,7 +1137,7 @@ class UkoreShotPage(QWidget):
             _logger.info("Get Video - Commented: wrote %s", output_path)
         finally:
             self._hide_status()
-        _reveal_and_select_in_explorer(output_path)
+        self._notify_export_ready(output_path)
 
     def _render_commented_video(self, ffmpeg_path: str, sequence_dir: Path, output_path: Path) -> None:
         frame_paths = sorted(

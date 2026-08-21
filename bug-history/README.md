@@ -53,3 +53,19 @@ never affected — it burns the frame number via `player_widget.py`'s
 not ffmpeg `drawtext` at all — see `video_library_page.py`'s
 `_render_commented_video`). Fixed by using `%{frame_num}` instead of
 `%{n}`.
+
+## 2026-08-21 — Edit Message showed no dialog at all
+
+`interface/comment_editor.py`'s new `_EditCommentDialog` (the
+`QPlainTextEdit`-based replacement for the old single-line
+`QInputDialog.getText`) called `cursor.movePosition(cursor.End)` to place
+the cursor at the end of any existing text — `QTextCursor.End`'s flat
+(unscoped) enum access isn't valid against the PySide6 version installed
+here, so the constructor raised inside `_on_edit_message_clicked`'s
+connected slot. PySide6 prints an uncaught slot exception to the console
+but doesn't propagate it, so clicking pushButton_edit_message just did
+nothing visible — the exact "silent failure" class of bug this file's own
+`CommentEditor.__init__` docstring already documents for a different past
+crash (the `WindowMaximized`/`resizeEvent` one). Fixed by dropping the
+cursor-to-end positioning entirely (cosmetic only, not worth the enum
+risk) rather than chasing the "correct" scoped-vs-flat spelling.
