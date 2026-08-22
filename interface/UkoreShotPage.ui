@@ -13,7 +13,7 @@
   <property name="windowTitle">
    <string>Form</string>
   </property>
-  <layout class="QGridLayout" name="gridLayout_9">
+  <layout class="QGridLayout" name="gridLayout_9" rowstretch="10,0">
    <item row="0" column="0">
     <widget class="QGroupBox" name="groupBox_3">
      <property name="title">
@@ -497,6 +497,12 @@
    </item>
    <item row="1" column="0">
     <widget class="QWidget" name="widget_status_loading" native="true">
+     <property name="minimumSize">
+      <size>
+       <width>300</width>
+       <height>0</height>
+      </size>
+     </property>
      <layout class="QGridLayout" name="gridLayout_6" columnstretch="1,9">
       <property name="leftMargin">
        <number>30</number>
