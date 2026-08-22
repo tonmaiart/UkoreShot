@@ -763,6 +763,14 @@ class CommentEditor(QDialog):
 
     def _save_comments(self, *, close_after: bool) -> None:
         share_state = comment_store.get_share_state(self._sequence_dir)
+        if share_state.get("is_shared"):
+            # Bumped here, before the write below, so it's part of what
+            # CommentSyncWorker actually pushes — video_library_page.py's
+            # _effective_mtime reads this (not the local file's own mtime,
+            # which only reflects when THIS machine last touched it) for a
+            # shared entry's Date/Time Ago column and sort order
+            # (2026-08-22, per the user's own request).
+            share_state["last_synced_at"] = datetime.datetime.now().isoformat()
         comment_store.save(self._sequence_dir, {"frames": self._frames, "share": share_state})
         _logger.info("saved comments.json for %s (%d frame(s))", self._sequence_dir, len(self._frames))
         if share_state.get("is_shared") and self._api.cloud_sync is not None and self._project_id and self._repo_id:

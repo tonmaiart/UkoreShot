@@ -97,6 +97,28 @@ class _LibraryEntry:
     share_state: dict
 
 
+def _effective_mtime(entry: _LibraryEntry) -> float:
+    """The timestamp the Date/Time Ago column, sort-by-newest, and the
+    default row selection all actually use (2026-08-22, per the user's own
+    request) — for a shared entry, the cloud's own "last_synced_at" (set on
+    every push: Mark as Share, then every incremental comment save while
+    already shared — see comment_store.py's own field docstring), falling
+    back to "shared_at" for one shared before that field existed. A local
+    file's own mtime only reflects when THIS machine last touched it
+    (extraction, a pull, ...) — not when the shot was actually last
+    updated anywhere — so it's wrong to use for a synced entry, but it's
+    still the only timestamp a not-yet-shared entry has."""
+    share = entry.share_state
+    if share.get("is_shared"):
+        timestamp = share.get("last_synced_at") or share.get("shared_at")
+        if timestamp:
+            try:
+                return datetime.datetime.fromisoformat(timestamp).timestamp()
+            except ValueError:
+                pass
+    return entry.mtime
+
+
 def _format_time_ago(mtime: float) -> str:
     delta_seconds = max(0.0, datetime.datetime.now().timestamp() - mtime)
     if delta_seconds < 60:
@@ -690,7 +712,7 @@ class UkoreShotPage(QWidget):
     def _sort_entries(self, entries: list[_LibraryEntry]) -> list[_LibraryEntry]:
         if self._sort_mode == _SORT_NAME_ASC:
             return sorted(entries, key=lambda e: e.stem.lower())
-        return sorted(entries, key=lambda e: e.mtime, reverse=True)  # _SORT_NEWEST, the default
+        return sorted(entries, key=_effective_mtime, reverse=True)  # _SORT_NEWEST, the default
 
     def _make_shared_cell_widget(self, is_shared: bool) -> QLabel:
         """Shared column, added 2026-08-21 — an icon (share.png) instead of
@@ -722,7 +744,7 @@ class UkoreShotPage(QWidget):
         for row, entry in enumerate(entries):
             name_item = QTableWidgetItem(entry.stem)
             name_item.setData(Qt.UserRole, entry.key)
-            self.table.setItem(row, _COL_DATE, QTableWidgetItem(_format_date_or_time_ago(entry.mtime)))
+            self.table.setItem(row, _COL_DATE, QTableWidgetItem(_format_date_or_time_ago(_effective_mtime(entry))))
             self.table.setItem(row, _COL_THUMBNAIL, QTableWidgetItem())
             self.table.setItem(row, _COL_NAME, name_item)
             self.table.setItem(row, _COL_SHARED, QTableWidgetItem())
@@ -774,7 +796,7 @@ class UkoreShotPage(QWidget):
             return
         target_key = self._selected_key
         if target_key is None or target_key not in {e.key for e in entries}:
-            target_key = max(entries, key=lambda e: e.mtime).key
+            target_key = max(entries, key=_effective_mtime).key
         for row in range(self.table.rowCount()):
             item = self.table.item(row, _COL_NAME)
             if item is not None and item.data(Qt.UserRole) == target_key:
@@ -1100,11 +1122,16 @@ class UkoreShotPage(QWidget):
         # pointer still needs to record whether it exists so a puller on
         # another machine knows whether to bother asking for it.
         audio_format = "m4a" if video_sequence.has_audio_file(sequence_dir, sequence_dir.name) else None
+        # last_synced_at set to the same timestamp as shared_at here (the
+        # very first push) — see comment_store.py's own field docstring for
+        # why this is the one _effective_mtime actually reads.
+        now_iso = datetime.datetime.now().isoformat()
         comment_store.set_share_state(
             sequence_dir,
             is_shared=True,
             code=code,
-            shared_at=datetime.datetime.now().isoformat(),
+            shared_at=now_iso,
+            last_synced_at=now_iso,
             frame_count=len(frame_files),
             image_format=image_format,
             fps=fps,

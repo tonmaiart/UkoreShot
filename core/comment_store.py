@@ -27,6 +27,17 @@ _DEFAULT_SHARE_STATE = {
     "is_shared": False,
     "code": None,
     "shared_at": None,
+    # Updated on every push to the cloud (initial Mark as Share, then every
+    # incremental comment save while already shared — see
+    # video_library_page.py's _on_mark_as_share_clicked and
+    # comment_editor.py's _save_comments) — unlike "shared_at" (the
+    # one-time initial share timestamp), this is what
+    # video_library_page.py's _effective_mtime uses for a shared entry's
+    # Date/Time Ago column and sort order, since the local file's own
+    # mtime only reflects when THIS machine last touched it (extraction, a
+    # pull, ...), not when the shot was actually last updated anywhere
+    # (2026-08-22, per the user's own request).
+    "last_synced_at": None,
     "frame_count": None,
     "image_format": None,
     "fps": None,

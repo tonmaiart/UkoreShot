@@ -100,7 +100,25 @@ further detail):
   `_format_time_ago` text (`"2h ago"`, `"5d ago"`, `"2mo ago"`, …) once it's
   older than that (`_TIME_AGO_CUTOFF_SECONDS`). Every other reference to a
   column is symbolic (via these `_COL_*` constants), so nothing else needed
-  to change.
+  to change. **The timestamp this column (and sort-by-newest, and the
+  default row selection) actually reads is `_effective_mtime`, not
+  `_LibraryEntry.mtime` directly** (2026-08-22, per the user's own request)
+  — for a shared entry it reads `comments.json`'s own `"share"` block
+  instead (`"last_synced_at"`, falling back to `"shared_at"` for one shared
+  before that field existed), since the local video/sequence file's own
+  mtime only reflects when *this* machine last touched it (extraction, a
+  pull, ...), not when the shot was actually last updated anywhere —
+  meaningless (and different per machine) for something that's supposed to
+  be the same synced entry everywhere. `"last_synced_at"` is set in
+  `comment_store.py`'s `_DEFAULT_SHARE_STATE` and bumped on every push: the
+  initial Mark as Share (`video_library_page.py`'s
+  `_on_mark_as_share_clicked`) and every subsequent incremental comment
+  save while already shared (`comment_editor.py`'s `_save_comments`, bumped
+  *before* the write so `CommentSyncWorker` actually pushes the new value)
+  — so a machine that later pulls this entry via its share code gets the
+  correct timestamp for free, embedded in the same `comments.json` it
+  already pulls. A not-yet-shared entry has no such timestamp to fall back
+  to, so it still uses its own local `mtime`.
   **`lineEdit_copy_code`** (read-only, added to `UkoreShotPage.ui` 2026-08-22)
   shows the selected entry's share code (blank if unshared), kept in sync
   in `_update_button_states` alongside `pushButton_copy_clipboard`'s own
