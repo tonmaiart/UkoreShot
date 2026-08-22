@@ -17,6 +17,7 @@ from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QHeaderView,
@@ -62,7 +63,7 @@ _ICONS_DIR = Path(__file__).resolve().parent.parent / "images"
 _SHARE_ICON_PATH = _ICONS_DIR / "share.png"
 _SHARE_ICON_SIZE = QSize(20, 20)
 
-_COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_DATE, _COL_TIME_AGO = range(5)
+_COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_SHARE_CODE, _COL_DATE, _COL_TIME_AGO = range(6)
 
 _SORT_NAME_ASC = "name_asc"
 _SORT_NEWEST = "newest"
@@ -139,13 +140,15 @@ class UkoreShotPage(QWidget):
     in the host app — the .ui only supplies layout/widget identity, not
     behavior, same convention those two follow). groupBox_playblast_viewer
     gets a PlayerWidget inserted at runtime; tableWidget_playblast_library
-    (Thumbnail/Name/Shared/Date/Time Ago) replaces the old FlowLayout card
-    grid + FilterSidebar entirely — confirmed with the user this round that
-    per-category filtering is retired in favor of just the wildcard search
-    bar + sort buttons this .ui actually has.
+    (Thumbnail/Name/Shared/Share Code/Date/Time Ago) replaces the old
+    FlowLayout card grid + FilterSidebar entirely — confirmed with the user
+    this round that per-category filtering is retired in favor of just the
+    wildcard search bar + sort buttons this .ui actually has. The search bar
+    also matches against a video's share code (not just its stem), so
+    pasting/typing an already-local code filters straight to that row.
 
     Video->image-sequence splitting is lazy (core/video_sequence.py),
-    triggered only from pushButton_comment/pushButton_mark_as_share's own
+    triggered only from pushButton_comment/pushButton_copy_clipboard's own
     handlers — never from a reload/refresh scan, per the user's explicit
     "don't convert every video just from browsing" instruction. Edit
     Comment (pushButton_comment) opens the in-house CommentEditor directly
@@ -154,12 +157,16 @@ class UkoreShotPage(QWidget):
     covers it).
 
     Discord support removed entirely 2026-08-21 (standalone tool now) —
-    pushButton_get_video/pushButton_get_video_commented replace the old
-    Discord-oriented "get format video"/"auto send to Discord" buttons:
-    both just generate a local .mp4 (hard-capped at 20MB) into a
+    pushButton_get_video paired with checkBox_display_comment_download
+    replace the old Discord-oriented "get format video"/"auto send to
+    Discord" buttons: generates a local .mp4 (hard-capped at 20MB) into a
     cache-only export folder that's never touched by cloud sync, and
-    reveal+select it in Explorer — see _on_get_video_clicked/
-    _on_get_video_commented_clicked below.
+    reveal+select it in Explorer — see _on_get_video_clicked below.
+    Mark as Share and Copy Share Code were merged into the single
+    pushButton_copy_clipboard (2026-08-22, per the user's own request):
+    its label/action switch on whether the selected entry is already
+    shared ("Make Share" when not, "Copy Code" once it is) — see
+    _on_copy_clipboard_clicked below.
 
     **Shared status is an icon, not text, as of 2026-08-21** — share.png
     via a small QLabel cell widget (_make_shared_cell_widget), not
@@ -225,11 +232,15 @@ class UkoreShotPage(QWidget):
         self.sort_ascending_button: QPushButton = find(QPushButton, "pushButton_sort_ascending")
         self.sort_newest_button: QPushButton = find(QPushButton, "pushButton_sort_newest")
         self.comment_button: QPushButton = find(QPushButton, "pushButton_comment")
-        self.mark_as_share_button: QPushButton = find(QPushButton, "pushButton_mark_as_share")
         self.delete_button: QPushButton = find(QPushButton, "pushButton_delete_playblast")
+        # Doubles as Mark as Share (not yet shared) / Copy Share Code
+        # (already shared) — see _update_button_states/_on_copy_clipboard_clicked.
         self.copy_clipboard_button: QPushButton = find(QPushButton, "pushButton_copy_clipboard")
         self.get_video_button: QPushButton = find(QPushButton, "pushButton_get_video")
-        self.get_video_commented_button: QPushButton = find(QPushButton, "pushButton_get_video_commented")
+        # Paired with pushButton_get_video — checked routes the export
+        # through the "commented" (drawings + frame number burned in)
+        # render path instead of the plain one.
+        self.display_comment_download_checkbox: QCheckBox = find(QCheckBox, "checkBox_display_comment_download")
         self.prev_frame_button: QPushButton = find(QPushButton, "pushButton_previous_frame")
         self.play_button: QPushButton = find(QPushButton, "pushButton_play")
         self.next_frame_button: QPushButton = find(QPushButton, "pushButton_next_frame")
@@ -264,11 +275,10 @@ class UkoreShotPage(QWidget):
             ("pushButton_sort_ascending", self.sort_ascending_button),
             ("pushButton_sort_newest", self.sort_newest_button),
             ("pushButton_comment", self.comment_button),
-            ("pushButton_mark_as_share", self.mark_as_share_button),
             ("pushButton_delete_playblast", self.delete_button),
             ("pushButton_copy_clipboard", self.copy_clipboard_button),
             ("pushButton_get_video", self.get_video_button),
-            ("pushButton_get_video_commented", self.get_video_commented_button),
+            ("checkBox_display_comment_download", self.display_comment_download_checkbox),
             ("pushButton_previous_frame", self.prev_frame_button),
             ("pushButton_play", self.play_button),
             ("pushButton_next_frame", self.next_frame_button),
@@ -332,8 +342,8 @@ class UkoreShotPage(QWidget):
         self.keyframe_edit.setPlaceholderText("Frame")
         self.keyframe_edit.returnPressed.connect(self._on_keyframe_edit_entered)
 
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["", "Name", "Shared", "Date", "Time Ago"])
+        self.table.setColumnCount(6)
+        self.table.setHorizontalHeaderLabels(["", "Name", "Shared", "Share Code", "Date", "Time Ago"])
         self.table.setIconSize(_ICON_SIZE)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -345,6 +355,7 @@ class UkoreShotPage(QWidget):
         self.table.setColumnWidth(_COL_THUMBNAIL, _ICON_SIZE.width() + 8)
         header.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
         header.setSectionResizeMode(_COL_SHARED, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(_COL_SHARE_CODE, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_COL_DATE, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_COL_TIME_AGO, QHeaderView.ResizeToContents)
 
@@ -354,11 +365,14 @@ class UkoreShotPage(QWidget):
         self.sort_ascending_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NAME_ASC))
         self.sort_newest_button.clicked.connect(lambda: self._set_sort_mode(_SORT_NEWEST))
         self.comment_button.clicked.connect(self._on_edit_comment_clicked)
-        self.mark_as_share_button.clicked.connect(self._on_mark_as_share_clicked)
         self.copy_clipboard_button.clicked.connect(self._on_copy_clipboard_clicked)
         self.get_video_button.clicked.connect(self._on_get_video_clicked)
-        self.get_video_commented_button.clicked.connect(self._on_get_video_commented_clicked)
         self.delete_button.clicked.connect(self._on_delete_playblast_clicked)
+        if self.display_comment_download_checkbox is not None:
+            # Enabled state of pushButton_get_video depends on it (see
+            # _update_button_states) — a video-less, sequence-only entry can
+            # only be exported with the checkbox checked.
+            self.display_comment_download_checkbox.toggled.connect(lambda _checked: self._update_button_states())
         self.copy_clipboard_button.setEnabled(False)
 
         # Shift+A/Shift+D — jump to the previous/next commented keyframe of
@@ -654,7 +668,14 @@ class UkoreShotPage(QWidget):
 
     def _apply_filter(self) -> None:
         search = self.search_edit.text().strip()
-        entries = [e for e in self._entries_by_key.values() if _wildcard_match(search, e.stem)]
+        # Matches against a video's own share code too (not just its stem)
+        # so pasting/typing an already-local code filters straight to that
+        # row — a separate concern from _on_search_enter's own "pull a
+        # not-yet-local code from the cloud" handling below.
+        entries = [
+            e for e in self._entries_by_key.values()
+            if _wildcard_match(search, e.stem) or _wildcard_match(search, e.share_state.get("code") or "")
+        ]
         entries = self._sort_entries(entries)
 
         self.table.setRowCount(len(entries))
@@ -670,6 +691,7 @@ class UkoreShotPage(QWidget):
             # this up to thumbnail size too; a small QLabel here renders at
             # whatever size it's actually given instead.
             self.table.setCellWidget(row, _COL_SHARED, self._make_shared_cell_widget(entry.share_state["is_shared"]))
+            self.table.setItem(row, _COL_SHARE_CODE, QTableWidgetItem(entry.share_state.get("code") or ""))
             date_text = datetime.datetime.fromtimestamp(entry.mtime).strftime("%Y-%m-%d %H:%M")
             self.table.setItem(row, _COL_DATE, QTableWidgetItem(date_text))
             self.table.setItem(row, _COL_TIME_AGO, QTableWidgetItem(_format_time_ago(entry.mtime)))
@@ -792,17 +814,21 @@ class UkoreShotPage(QWidget):
         has_selection = entry is not None
         is_shared = has_selection and entry.share_state["is_shared"]
         self.comment_button.setEnabled(has_selection)
-        # Already shared — Mark as Share has nothing left to do for this
-        # entry (re-sharing isn't a thing; Comment's own incremental
-        # CommentSyncWorker already keeps a shared video's comments.json up
-        # to date on Save).
-        self.mark_as_share_button.setEnabled(has_selection and not is_shared)
-        # Get Video needs a real source file to compress from; Get Video -
-        # Commented works off the sequence instead, which every selectable
-        # entry has (or can lazily extract) regardless of a local video file.
-        self.get_video_button.setEnabled(has_selection and entry.video_path is not None)
-        self.get_video_commented_button.setEnabled(has_selection)
-        self.copy_clipboard_button.setEnabled(bool(is_shared and entry.share_state.get("code")))
+        # pushButton_copy_clipboard does double duty (2026-08-22): Make
+        # Share for a not-yet-shared entry, Copy Code once it is — see
+        # _on_copy_clipboard_clicked. Enabled whenever something's
+        # selected; which action it takes is decided at click time.
+        self.copy_clipboard_button.setEnabled(has_selection)
+        self.copy_clipboard_button.setText("Copy Code" if is_shared else "Make Share")
+        # checkBox_display_comment_download checked routes pushButton_get_video
+        # through the "commented" render path, which works off the sequence
+        # (extractable for any entry) rather than needing a real local video
+        # file the way the plain export does.
+        wants_comments = has_selection and self.display_comment_download_checkbox is not None and self.display_comment_download_checkbox.isChecked()
+        if wants_comments:
+            self.get_video_button.setEnabled(has_selection)
+        else:
+            self.get_video_button.setEnabled(has_selection and entry.video_path is not None)
         self.delete_button.setEnabled(bool(self._selected_entries()))
 
     # -- share-code search-bar round-trip -----------------------------------
@@ -1047,7 +1073,7 @@ class UkoreShotPage(QWidget):
         )
 
         _logger.info("Mark as Share: uploading %s (code=%s, %d frame(s))", sequence_dir, code, len(frame_files))
-        self.mark_as_share_button.setEnabled(False)
+        self.copy_clipboard_button.setEnabled(False)
         self._set_status_message("Uploading to cloud...")
         worker = ShareUploadWorker(
             self._api.cloud_sync, project_id=self._project_id, repo_id=self._repo_id, sequence_dir=sequence_dir, parent=self
@@ -1071,7 +1097,7 @@ class UkoreShotPage(QWidget):
         audio_format: str | None,
     ) -> None:
         self._share_worker = None
-        self.mark_as_share_button.setEnabled(True)
+        self.copy_clipboard_button.setEnabled(True)
         self._hide_status()
         _logger.info("Mark as Share: upload succeeded for %s, pushing pointer", sequence_dir)
         # Only made discoverable now that every frame + the final
@@ -1117,7 +1143,7 @@ class UkoreShotPage(QWidget):
 
     def _on_share_upload_failed(self, message: str, entry_key: str, sequence_dir: Path, *, was_already_shared: bool) -> None:
         self._share_worker = None
-        self.mark_as_share_button.setEnabled(True)
+        self.copy_clipboard_button.setEnabled(True)
         self._hide_status()
         _logger.warning("Mark as Share: upload failed for %s: %s", sequence_dir, message)
         if not was_already_shared:
@@ -1132,12 +1158,22 @@ class UkoreShotPage(QWidget):
         QMessageBox.warning(self, "Share Failed", message)
 
     def _on_copy_clipboard_clicked(self) -> None:
+        """pushButton_copy_clipboard — doubles as Make Share/Copy Code
+        depending on the selected entry's share state (2026-08-22, per the
+        user's own request to merge the two buttons into one); which action
+        applies is decided fresh at click time rather than baked into a
+        separate handler, so it stays correct even if share state changed
+        underneath (e.g. an incremental sync) since the last button-state
+        refresh."""
         entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
         if entry is None:
             return
-        code = entry.share_state.get("code")
-        if code:
-            QApplication.clipboard().setText(code)
+        if entry.share_state.get("is_shared"):
+            code = entry.share_state.get("code")
+            if code:
+                QApplication.clipboard().setText(code)
+        else:
+            self._on_mark_as_share_clicked()
 
     # -- delete ---------------------------------------------------------------
 
@@ -1208,6 +1244,16 @@ class UkoreShotPage(QWidget):
         _reveal_and_select_in_explorer(output_path)
 
     def _on_get_video_clicked(self) -> None:
+        """pushButton_get_video — routes to the plain or "commented" export
+        depending on checkBox_display_comment_download (2026-08-22, per the
+        user's own request to merge the old separate Get Video/Get Video -
+        Commented buttons behind this one checkbox)."""
+        if self.display_comment_download_checkbox is not None and self.display_comment_download_checkbox.isChecked():
+            self._export_commented_video()
+        else:
+            self._export_plain_video()
+
+    def _export_plain_video(self) -> None:
         """Burns the current frame number into every frame (top-center,
         matching player_widget.py's own _FrameNumberOverlay HUD look) while
         also targeting _MAX_EXPORT_BYTES, in one single ffmpeg pass (see
@@ -1245,7 +1291,7 @@ class UkoreShotPage(QWidget):
             self._hide_status()
         self._notify_export_ready(output_path)
 
-    def _on_get_video_commented_clicked(self) -> None:
+    def _export_commented_video(self) -> None:
         """Same 20MB-capped local export as Get Video above, but composites
         each frame's saved drawing (core/comment_store.py's per-frame
         "strokes") onto the frame first — works for a sequence-only entry

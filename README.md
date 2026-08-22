@@ -46,16 +46,34 @@ further detail):
   `QUiLoader` — the `.ui` supplies layout/widget identity, the Python
   wires behavior. `video_library_page.py`'s `UkoreShotPage` is the
   section's top-level widget (search/sort/table + an inline `PlayerWidget`
-  viewer + Comment/Mark as Share/Get Video/Get Video - Commented/Delete).
+  viewer + Comment/Copy Clipboard/Get Video/Delete).
   `tableWidget_playblast_library` is multi-selectable (`ExtendedSelection`,
   2026-08-21) — `pushButton_delete_playblast` deletes every selected row's
   local video file + `sequence_dir` (comments.json included), confirmed
   with a dialog first; deleting a shared entry only ever removes the local
   copy (R2JsonSync has no delete-blob operation, so the cloud copy and its
   share code both keep working from any other machine — this is
-  deliberate, not a TODO). Mark as Share is disabled once an entry is
-  already shared. Shift+A/Shift+D jump to the previous/next commented
-  keyframe here too, same as `CommentEditor`'s own shortcut.
+  deliberate, not a TODO). Shift+A/Shift+D jump to the previous/next
+  commented keyframe here too, same as `CommentEditor`'s own shortcut.
+  **`pushButton_mark_as_share`/`pushButton_copy_clipboard` were merged into
+  one button, `pushButton_copy_clipboard` (2026-08-22, per the user's own
+  request)** — `_update_button_states` swaps its label between "Make
+  Share" (entry not yet shared) and "Copy Code" (already shared), and
+  `_on_copy_clipboard_clicked` dispatches to whichever action applies at
+  click time instead of a separate handler wired to a separate button.
+  **`pushButton_get_video_commented` was likewise removed and replaced by
+  `checkBox_display_comment_download`, sharing `pushButton_get_video`**
+  (2026-08-22) — checked routes the click through the "commented" render
+  path (composited drawings + frame number, works off the sequence alone)
+  instead of the plain one (needs a real local video file); see
+  `_on_get_video_clicked`'s dispatch to `_export_plain_video`/
+  `_export_commented_video` below. **`tableWidget_playblast_library` also
+  gained a Share Code column** (2026-08-22) showing each entry's share
+  code (blank if unshared), and the wildcard search bar now matches a
+  video's share code as well as its stem — so pasting/typing an
+  already-local code filters straight to that row without needing
+  Enter/a cloud round-trip (typing a code that isn't local yet still goes
+  through `_on_search_enter`'s existing pull-by-code path on Enter).
   `pushButton_sort_oldest` was removed from `UkoreShotPage.ui` 2026-08-21
   (name-ascending/newest-first are the only sort modes left).
   `pushButton_show_comment_toggle` (checkable) toggles `player_widget.py`'s
@@ -215,7 +233,9 @@ alongside the frames, which `interface/sequence_player.py` plays back in
 sync with the frame sequence.
 
 "Mark as Share" (`interface/video_library_page.py`'s
-`pushButton_mark_as_share`) uploads that sequence + `comments.json` to
+`pushButton_copy_clipboard`, while the selected entry isn't shared yet —
+merged into that one button 2026-08-22, see the `interface/` bullet above)
+uploads that sequence + `comments.json` to
 Cloudflare R2 via `api.cloud_sync` (`core/share_sync.py`'s
 `ShareUploadWorker`), then generates and persists a
 `UKSHOT_{ShotCode}_v{version}_{4 hex chars}` code
@@ -289,9 +309,12 @@ fresh Mark as Share for every comment.
 
 ## Get Video / Get Video - Commented
 
-Added 2026-08-21: `pushButton_get_video`/`pushButton_get_video_commented`
-in `video_library_page.py` each generate a fresh, hard-capped-at-20MB
-`.mp4` on click, then show a single-button "Ok and Show me in explorer"
+Added 2026-08-21: `pushButton_get_video` in `video_library_page.py`
+generates a fresh, hard-capped-at-20MB `.mp4` on click, routed to either
+export path below depending on `checkBox_display_comment_download`
+(merged from a separate `pushButton_get_video_commented` button
+2026-08-22, see the `interface/` bullet above), then shows a single-button
+"Ok and Show me in explorer"
 dialog (`_notify_export_ready`, so Explorer popping open doesn't catch
 anyone off guard) before revealing+selecting it in Windows Explorer
 (`explorer /select,`). Get Video burns the frame number into every frame
