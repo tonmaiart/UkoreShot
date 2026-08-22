@@ -354,6 +354,14 @@ class UkoreShotPage(QWidget):
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
+        # Gray selection highlight (2026-08-22, per the user's own request —
+        # was Qt's default blue), same convention comment_editor.py's own
+        # tableWidget_comment already uses — targets the item cells
+        # specifically rather than QPalette.Highlight, so it doesn't also
+        # recolor selection in other widgets sharing this page's palette.
+        self.table.setStyleSheet(
+            "QTableWidget::item:selected { background-color: #5a5a5a; color: white; }"
+        )
         self.table.verticalHeader().setDefaultSectionSize(_ICON_SIZE.height() + 12)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(_COL_TIME_AGO, QHeaderView.ResizeToContents)
