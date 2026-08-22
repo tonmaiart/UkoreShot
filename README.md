@@ -74,24 +74,46 @@ further detail):
   already-local code filters straight to that row without needing
   Enter/a cloud round-trip (typing a code that isn't local yet still goes
   through `_on_search_enter`'s existing pull-by-code path on Enter).
+  **`tableWidget_playblast_library`'s Time Ago/Date columns were moved to
+  the front of the table** (2026-08-22, per the user's own request) —
+  `_COL_TIME_AGO`/`_COL_DATE` now come before `_COL_THUMBNAIL`/`_COL_NAME`/
+  `_COL_SHARED`/`_COL_SHARE_CODE`; every other reference to a column is
+  symbolic (via these `_COL_*` constants), so nothing else needed to change.
+  **`lineEdit_copy_code`** (read-only, added to `UkoreShotPage.ui` 2026-08-22)
+  shows the selected entry's share code (blank if unshared), kept in sync
+  in `_update_button_states` alongside `pushButton_copy_clipboard`'s own
+  label swap. **`pushButton_reload`/`_reload_videos_and_sync` now restores
+  the previously-selected row after a Reload** (2026-08-22, per the user's
+  own request) — `_reload_videos()` on its own still always resets
+  selection to its "most recently modified" default (see that method's own
+  docstring), so `_reload_videos_and_sync` captures `self._selected_key`
+  before calling it and re-selects it via `_select_row_by_key` right after,
+  same pattern `_on_shared_comments_synced` already used for the
+  background-sync tail end of the same call. **Reload also now shows
+  `widget_status_loading`** for the whole call (2026-08-22, same request) —
+  covering the background `SyncSharedCommentsWorker` pull when one runs,
+  not just the synchronous local rescan.
   `pushButton_sort_oldest` was removed from `UkoreShotPage.ui` 2026-08-21
   (name-ascending/newest-first are the only sort modes left).
-  `pushButton_show_comment_toggle` (checkable) toggles `player_widget.py`'s
-  new `_CommentOverlay` — a read-only rendering of the current frame's
-  saved strokes over the video, the plain viewer's counterpart to
-  `DrawOverlay`'s live drawing canvas, without needing to open the full
-  `CommentEditor` (2026-08-21). `UkoreShotPage` caches the selected
-  entry's whole `comments.json` "frames" dict once per selection
-  (`_current_entry_frames`) rather than re-reading it from disk on every
-  frame tick during playback. The button's own icon swaps with its state
-  (`_update_show_comment_icon`) — `comment_mode.png` while showing
-  comments, `icons8-video-50.png` while off. `plainTextEdit_comment`
-  ("Current Keyframe Comment" box, added 2026-08-21) always shows whichever
-  text comment(s) are saved on the frame currently on screen — independent
-  of `pushButton_show_comment_toggle` (that one only governs the drawing
-  overlay) — one per line, refreshed via `_refresh_comment_text()` off the
-  same cached `_current_entry_frames` `_refresh_frame_strokes` reads, so it
-  stays cheap on every frame tick during playback too.
+  `checkBox_display_comment_overlay` (a plain `QCheckBox` since 2026-08-22 —
+  was `pushButton_show_comment_toggle`, a checkable icon button with its own
+  icon-swap logic (`_update_show_comment_icon`, `comment_mode.png`/
+  `icons8-video-50.png`), replaced per the user's own request; the checkbox
+  just uses its own `.ui`-authored label "แสดง Comment" instead, no icon
+  swap needed anymore) toggles `player_widget.py`'s `_CommentOverlay` — a
+  read-only rendering of the current frame's saved strokes over the video,
+  the plain viewer's counterpart to `DrawOverlay`'s live drawing canvas,
+  without needing to open the full `CommentEditor` (2026-08-21).
+  `UkoreShotPage` caches the selected entry's whole `comments.json`
+  "frames" dict once per selection (`_current_entry_frames`) rather than
+  re-reading it from disk on every frame tick during playback.
+  `plainTextEdit_comment` ("Current Keyframe Comment" box, added
+  2026-08-21) always shows whichever text comment(s) are saved on the frame
+  currently on screen — independent of `checkBox_display_comment_overlay`
+  (that one only governs the drawing overlay) — one per line, refreshed via
+  `_refresh_comment_text()` off the same cached `_current_entry_frames`
+  `_refresh_frame_strokes` reads, so it stays cheap on every frame tick
+  during playback too.
   `CommentEditor`'s Keyframe Comment table no longer auto-adds a row for
   whichever frame the player happens to be on (removed 2026-08-21, per the
   user's own request) — a frame only ever gets a row once it actually has

@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1232</width>
-    <height>786</height>
+    <height>812</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -19,7 +19,7 @@
      <property name="title">
       <string/>
      </property>
-     <layout class="QGridLayout" name="gridLayout_5">
+     <layout class="QGridLayout" name="gridLayout_5" columnstretch="2,1">
       <property name="leftMargin">
        <number>0</number>
       </property>
@@ -35,6 +35,19 @@
       <item row="0" column="1">
        <widget class="QWidget" name="widget_3" native="true">
         <layout class="QGridLayout" name="gridLayout_2">
+         <item row="2" column="0">
+          <widget class="QPlainTextEdit" name="plainTextEdit_comment">
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>60</height>
+            </size>
+           </property>
+           <property name="readOnly">
+            <bool>true</bool>
+           </property>
+          </widget>
+         </item>
          <item row="0" column="0">
           <widget class="QGroupBox" name="groupBox_5">
            <property name="title">
@@ -59,6 +72,11 @@
             </item>
             <item row="0" column="1">
              <widget class="QCheckBox" name="checkBox_display_comment_download">
+              <property name="font">
+               <font>
+                <pointsize>10</pointsize>
+               </font>
+              </property>
               <property name="text">
                <string>แสดง Comment</string>
               </property>
@@ -87,13 +105,18 @@
             </item>
             <item row="0" column="4">
              <widget class="QLabel" name="label_2">
+              <property name="font">
+               <font>
+                <pointsize>10</pointsize>
+               </font>
+              </property>
               <property name="text">
                <string>Share Code : </string>
               </property>
              </widget>
             </item>
             <item row="0" column="5">
-             <widget class="QLineEdit" name="lineEdit">
+             <widget class="QLineEdit" name="lineEdit_copy_code">
               <property name="minimumSize">
                <size>
                 <width>0</width>
@@ -125,8 +148,13 @@
             </item>
             <item row="0" column="0">
              <widget class="QLabel" name="label_3">
+              <property name="font">
+               <font>
+                <pointsize>10</pointsize>
+               </font>
+              </property>
               <property name="text">
-               <string>Download : </string>
+               <string>Get Video :</string>
               </property>
              </widget>
             </item>
@@ -134,57 +162,7 @@
           </widget>
          </item>
          <item row="1" column="0">
-          <layout class="QHBoxLayout" name="horizontalLayout_4">
-           <item>
-            <spacer name="horizontalSpacer_7">
-             <property name="orientation">
-              <enum>Qt::Horizontal</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size>
-               <width>40</width>
-               <height>20</height>
-              </size>
-             </property>
-            </spacer>
-           </item>
-           <item>
-            <widget class="QLabel" name="label">
-             <property name="text">
-              <string>Boost Volume</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QSlider" name="horizontalSlider_boost_volume">
-             <property name="minimum">
-              <number>100</number>
-             </property>
-             <property name="maximum">
-              <number>300</number>
-             </property>
-             <property name="orientation">
-              <enum>Qt::Horizontal</enum>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="2" column="0">
           <layout class="QVBoxLayout" name="verticalLayout_3">
-           <item>
-            <widget class="QPlainTextEdit" name="plainTextEdit_comment">
-             <property name="maximumSize">
-              <size>
-               <width>16777215</width>
-               <height>60</height>
-              </size>
-             </property>
-             <property name="readOnly">
-              <bool>true</bool>
-             </property>
-            </widget>
-           </item>
            <item>
             <layout class="QVBoxLayout" name="verticalLayout_2" stretch="10,0">
              <item>
@@ -197,15 +175,9 @@
              <item>
               <layout class="QHBoxLayout" name="horizontalLayout_6">
                <item>
-                <widget class="QPushButton" name="pushButton_show_comment_toggle">
-                 <property name="minimumSize">
-                  <size>
-                   <width>40</width>
-                   <height>30</height>
-                  </size>
-                 </property>
+                <widget class="QLabel" name="label_4">
                  <property name="text">
-                  <string/>
+                  <string>Speed :</string>
                  </property>
                 </widget>
                </item>
@@ -216,6 +188,13 @@
                    <width>40</width>
                    <height>30</height>
                   </size>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_5">
+                 <property name="text">
+                  <string>Keyframe :</string>
                  </property>
                 </widget>
                </item>
@@ -247,6 +226,26 @@
                   </size>
                  </property>
                 </spacer>
+               </item>
+               <item>
+                <widget class="QLabel" name="label">
+                 <property name="text">
+                  <string>Boost Volume</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QSlider" name="horizontalSlider_boost_volume">
+                 <property name="minimum">
+                  <number>100</number>
+                 </property>
+                 <property name="maximum">
+                  <number>300</number>
+                 </property>
+                 <property name="orientation">
+                  <enum>Qt::Horizontal</enum>
+                 </property>
+                </widget>
                </item>
                <item>
                 <widget class="QPushButton" name="pushButton_previous_comment">
@@ -314,6 +313,13 @@
                 </widget>
                </item>
                <item>
+                <widget class="QCheckBox" name="checkBox_display_comment_overlay">
+                 <property name="text">
+                  <string>แสดง Comment</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
                 <spacer name="horizontalSpacer_5">
                  <property name="orientation">
                   <enum>Qt::Horizontal</enum>
@@ -340,7 +346,7 @@
                   </font>
                  </property>
                  <property name="text">
-                  <string>Edit Comment...</string>
+                  <string>Comment...</string>
                  </property>
                 </widget>
                </item>
@@ -447,6 +453,9 @@
            <property name="showGrid">
             <bool>false</bool>
            </property>
+           <attribute name="horizontalHeaderVisible">
+            <bool>false</bool>
+           </attribute>
            <attribute name="verticalHeaderVisible">
             <bool>false</bool>
            </attribute>
@@ -510,6 +519,13 @@
       </property>
       <item row="0" column="0">
        <widget class="QLabel" name="label_loading">
+        <property name="font">
+         <font>
+          <pointsize>10</pointsize>
+          <weight>75</weight>
+          <bold>true</bold>
+         </font>
+        </property>
         <property name="text">
          <string/>
         </property>

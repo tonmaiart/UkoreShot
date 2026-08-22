@@ -156,8 +156,9 @@ class _CommentOverlay(QWidget):
     """Read-only rendering of the current frame's saved strokes on top of
     the video surface — the plain viewer's (show_edit_tools=False)
     counterpart to DrawOverlay's live drawing canvas, added 2026-08-21 so
-    UkoreShotPage's pushButton_show_comment_toggle can show what was drawn
-    on a frame without opening the full CommentEditor. Reuses
+    UkoreShotPage's checkBox_display_comment_overlay (a checkable icon
+    button, pushButton_show_comment_toggle, until 2026-08-22) can show what
+    was drawn on a frame without opening the full CommentEditor. Reuses
     draw_overlay.py's own paint_stroke_points — the same normalized
     0-1-widget-space stroke math DrawOverlay/Get Video - Commented already
     use, just rendered here with none of DrawOverlay's mouse handling.
@@ -470,8 +471,9 @@ class PlayerWidget(QWidget):
         # PlayerWidget (show_edit_tools=True). A plain viewer
         # (show_edit_tools=False) gets _CommentOverlay instead — a
         # read-only rendering of the current frame's saved strokes, added
-        # 2026-08-21 for UkoreShotPage's pushButton_show_comment_toggle —
-        # the two are mutually exclusive (only one is ever non-None), both
+        # 2026-08-21 for UkoreShotPage's checkBox_display_comment_overlay
+        # (pushButton_show_comment_toggle until 2026-08-22) — the two are
+        # mutually exclusive (only one is ever non-None), both
         # fill the same _VideoStack "overlay" slot.
         self.draw_overlay = DrawOverlay() if show_edit_tools else None
         self.comment_overlay = None if show_edit_tools else _CommentOverlay()
@@ -780,7 +782,7 @@ class PlayerWidget(QWidget):
             self.comment_overlay.set_strokes(strokes)
 
     def set_comments_visible(self, visible: bool) -> None:
-        """pushButton_show_comment_toggle — shows/hides _CommentOverlay
+        """checkBox_display_comment_overlay — shows/hides _CommentOverlay
         without needing to re-supply set_frame_strokes' data each time."""
         if self.comment_overlay is not None:
             self.comment_overlay.set_show_enabled(visible)

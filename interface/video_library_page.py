@@ -63,7 +63,7 @@ _ICONS_DIR = Path(__file__).resolve().parent.parent / "images"
 _SHARE_ICON_PATH = _ICONS_DIR / "share.png"
 _SHARE_ICON_SIZE = QSize(20, 20)
 
-_COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_SHARE_CODE, _COL_DATE, _COL_TIME_AGO = range(6)
+_COL_TIME_AGO, _COL_DATE, _COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_SHARE_CODE = range(6)
 
 _SORT_NAME_ASC = "name_asc"
 _SORT_NEWEST = "newest"
@@ -198,7 +198,7 @@ class UkoreShotPage(QWidget):
         self._selected_key: str | None = None
         self._sort_mode = _DEFAULT_SORT
         self._current_frame_index = 0
-        # pushButton_show_comment_toggle state — _current_entry_frames is
+        # checkBox_display_comment_overlay state — _current_entry_frames is
         # the selected entry's whole comments.json "frames" dict, cached
         # once per selection (not re-read from disk on every frame tick
         # during playback — see _load_selected_entry/_refresh_frame_strokes).
@@ -236,6 +236,10 @@ class UkoreShotPage(QWidget):
         # Doubles as Mark as Share (not yet shared) / Copy Share Code
         # (already shared) — see _update_button_states/_on_copy_clipboard_clicked.
         self.copy_clipboard_button: QPushButton = find(QPushButton, "pushButton_copy_clipboard")
+        # Read-only display of the selected entry's share code (blank if
+        # not shared) — kept in sync in _update_button_states, same place
+        # pushButton_copy_clipboard's own label switches.
+        self.copy_code_edit: QLineEdit = find(QLineEdit, "lineEdit_copy_code")
         self.get_video_button: QPushButton = find(QPushButton, "pushButton_get_video")
         # Paired with pushButton_get_video — checked routes the export
         # through the "commented" (drawings + frame number burned in)
@@ -251,12 +255,15 @@ class UkoreShotPage(QWidget):
         # Toggles player_widget.py's _CommentOverlay — the current frame's
         # saved strokes shown over the video, without opening the full
         # CommentEditor (2026-08-21, per the user's own request; see
-        # _on_show_comment_toggle/_refresh_frame_strokes below).
-        self.show_comment_toggle_button: QPushButton = find(QPushButton, "pushButton_show_comment_toggle")
+        # _on_show_comment_toggle/_refresh_frame_strokes below). Was
+        # pushButton_show_comment_toggle (a checkable icon button) until
+        # 2026-08-22, replaced with this plain checkbox per the user's own
+        # request.
+        self.show_comment_checkbox: QCheckBox = find(QCheckBox, "checkBox_display_comment_overlay")
         # "Current Keyframe Comment" box — always shows whichever comment
         # text is saved on the frame currently on screen, independent of
-        # pushButton_show_comment_toggle (that one only governs the drawing
-        # overlay). See _refresh_comment_text below.
+        # checkBox_display_comment_overlay (that one only governs the
+        # drawing overlay). See _refresh_comment_text below.
         self.comment_text_edit: QPlainTextEdit = find(QPlainTextEdit, "plainTextEdit_comment")
         # Generic busy indicator, added 2026-08-21 — shown/hidden around
         # every long-running operation this page runs (sequence extraction,
@@ -277,6 +284,7 @@ class UkoreShotPage(QWidget):
             ("pushButton_comment", self.comment_button),
             ("pushButton_delete_playblast", self.delete_button),
             ("pushButton_copy_clipboard", self.copy_clipboard_button),
+            ("lineEdit_copy_code", self.copy_code_edit),
             ("pushButton_get_video", self.get_video_button),
             ("checkBox_display_comment_download", self.display_comment_download_checkbox),
             ("pushButton_previous_frame", self.prev_frame_button),
@@ -286,7 +294,7 @@ class UkoreShotPage(QWidget):
             ("pushButton_next_comment", self.next_comment_button),
             ("comboBox_speed", self.speed_combo),
             ("lineEdit_keyframe", self.keyframe_edit),
-            ("pushButton_show_comment_toggle", self.show_comment_toggle_button),
+            ("checkBox_display_comment_overlay", self.show_comment_checkbox),
             ("plainTextEdit_comment", self.comment_text_edit),
             ("widget_status_loading", self.status_widget),
             ("label_loading", self.status_label),
@@ -323,14 +331,10 @@ class UkoreShotPage(QWidget):
         self.next_comment_button.clicked.connect(self._on_next_comment_clicked)
         # Toggles _CommentOverlay (player_widget.py) — off by default, shows
         # the current frame's saved strokes over the video without needing
-        # to open the full CommentEditor. setCheckable so Qt's own
-        # pressed/checked style also indicates state; the icon itself swaps
-        # too (2026-08-21, per the user's own request) — comment_mode.png
-        # while showing comments, icons8-video-50.png (a plain video icon)
-        # while off — see _update_show_comment_icon.
-        self.show_comment_toggle_button.setCheckable(True)
-        self.show_comment_toggle_button.toggled.connect(self._on_show_comment_toggle)
-        self._update_show_comment_icon()
+        # to open the full CommentEditor. A plain QCheckBox (own text
+        # "แสดง Comment" from the .ui) as of 2026-08-22, replacing the old
+        # checkable icon button — no icon swap to manage anymore.
+        self.show_comment_checkbox.toggled.connect(self._on_show_comment_toggle)
 
         # 0.25x-1.00x discrete steps — comboBox_speed replaces the old
         # continuous speed_slider for this page only (CommentEditor keeps
@@ -343,7 +347,7 @@ class UkoreShotPage(QWidget):
         self.keyframe_edit.returnPressed.connect(self._on_keyframe_edit_entered)
 
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["", "Name", "Shared", "Share Code", "Date", "Time Ago"])
+        self.table.setHorizontalHeaderLabels(["Time Ago", "Date", "", "Name", "Shared", "Share Code"])
         self.table.setIconSize(_ICON_SIZE)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -351,13 +355,13 @@ class UkoreShotPage(QWidget):
         self.table.itemSelectionChanged.connect(self._on_row_selected)
         self.table.verticalHeader().setDefaultSectionSize(_ICON_SIZE.height() + 12)
         header = self.table.horizontalHeader()
+        header.setSectionResizeMode(_COL_TIME_AGO, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(_COL_DATE, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_COL_THUMBNAIL, QHeaderView.Fixed)
         self.table.setColumnWidth(_COL_THUMBNAIL, _ICON_SIZE.width() + 8)
         header.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
         header.setSectionResizeMode(_COL_SHARED, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_COL_SHARE_CODE, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(_COL_DATE, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(_COL_TIME_AGO, QHeaderView.ResizeToContents)
 
         self.search_edit.textChanged.connect(self._apply_filter)
         self.search_edit.returnPressed.connect(self._on_search_enter)
@@ -455,17 +459,12 @@ class UkoreShotPage(QWidget):
         self._refresh_frame_strokes()
         self._refresh_comment_text()
 
-    # -- show comment overlay (pushButton_show_comment_toggle) --------------
+    # -- show comment overlay (checkBox_display_comment_overlay) ------------
 
     def _on_show_comment_toggle(self, checked: bool) -> None:
         self._show_comments = checked
         self.player_widget.set_comments_visible(checked)
         self._refresh_frame_strokes()
-        self._update_show_comment_icon()
-
-    def _update_show_comment_icon(self) -> None:
-        icon_path = _ICONS_DIR / ("comment_mode.png" if self._show_comments else "icons8-video-50.png")
-        PlayerWidget._set_button_icon(self.show_comment_toggle_button, icon_path, "Comments")
 
     def _refresh_frame_strokes(self) -> None:
         """Feeds player_widget.py's _CommentOverlay whichever frame is
@@ -485,7 +484,7 @@ class UkoreShotPage(QWidget):
         saved on the frame currently on screen — reads from the same cached
         self._current_entry_frames _refresh_frame_strokes uses, so this
         stays cheap called on every frame tick during playback too. Always
-        kept up to date regardless of pushButton_show_comment_toggle (that
+        kept up to date regardless of checkBox_display_comment_overlay (that
         one only governs the drawing overlay, not this box). A frame with
         multiple comments (Facebook-style, see comment_store.py) shows each
         on its own line, blank when there's none."""
@@ -609,13 +608,30 @@ class UkoreShotPage(QWidget):
         added 2026-08-21, per the user's own request. Not used by every
         _reload_videos() call site — only these two explicit user actions,
         not e.g. after a delete or a share-upload success, which don't
-        need a full re-sync of every *other* entry too."""
+        need a full re-sync of every *other* entry too.
+
+        Restores whatever was selected before the click (2026-08-22, per
+        the user's own request) — _reload_videos() always resets selection
+        to its own "most recently modified" default otherwise (see its own
+        docstring), which used to make every Reload click visibly jump the
+        viewer to a different entry. widget_status_loading is shown for the
+        whole call (2026-08-22, same request) — through the background sync
+        below when there's one to run, not just the synchronous local
+        rescan, so Reload always gives some visible feedback rather than
+        only when it happens to take a moment."""
+        previously_selected_key = self._selected_key
+        self._show_status("Reloading...")
         self._reload_videos()
+        if previously_selected_key is not None:
+            self._select_row_by_key(previously_selected_key)
         if self._api.cloud_sync is None or self._project_id is None or self._repo_id is None:
+            self._hide_status()
             return
         shared_dirs = [e.sequence_dir for e in self._entries_by_key.values() if e.share_state.get("is_shared")]
         if not shared_dirs:
+            self._hide_status()
             return
+        self._set_status_message("Syncing shared comments...")
         worker = SyncSharedCommentsWorker(
             self._api.cloud_sync,
             project_id=self._project_id,
@@ -642,6 +658,7 @@ class UkoreShotPage(QWidget):
         self._reload_videos()
         if previously_selected_key is not None:
             self._select_row_by_key(previously_selected_key)
+        self._hide_status()
 
     def _set_sort_mode(self, mode: str) -> None:
         self._sort_mode = mode
@@ -682,6 +699,9 @@ class UkoreShotPage(QWidget):
         for row, entry in enumerate(entries):
             name_item = QTableWidgetItem(entry.stem)
             name_item.setData(Qt.UserRole, entry.key)
+            self.table.setItem(row, _COL_TIME_AGO, QTableWidgetItem(_format_time_ago(entry.mtime)))
+            date_text = datetime.datetime.fromtimestamp(entry.mtime).strftime("%Y-%m-%d %H:%M")
+            self.table.setItem(row, _COL_DATE, QTableWidgetItem(date_text))
             self.table.setItem(row, _COL_THUMBNAIL, QTableWidgetItem())
             self.table.setItem(row, _COL_NAME, name_item)
             self.table.setItem(row, _COL_SHARED, QTableWidgetItem())
@@ -692,9 +712,6 @@ class UkoreShotPage(QWidget):
             # whatever size it's actually given instead.
             self.table.setCellWidget(row, _COL_SHARED, self._make_shared_cell_widget(entry.share_state["is_shared"]))
             self.table.setItem(row, _COL_SHARE_CODE, QTableWidgetItem(entry.share_state.get("code") or ""))
-            date_text = datetime.datetime.fromtimestamp(entry.mtime).strftime("%Y-%m-%d %H:%M")
-            self.table.setItem(row, _COL_DATE, QTableWidgetItem(date_text))
-            self.table.setItem(row, _COL_TIME_AGO, QTableWidgetItem(_format_time_ago(entry.mtime)))
             self._request_thumbnail(entry)
 
         self._restore_or_default_selection(entries)
@@ -820,6 +837,8 @@ class UkoreShotPage(QWidget):
         # selected; which action it takes is decided at click time.
         self.copy_clipboard_button.setEnabled(has_selection)
         self.copy_clipboard_button.setText("Copy Code" if is_shared else "Make Share")
+        if self.copy_code_edit is not None:
+            self.copy_code_edit.setText(entry.share_state.get("code") or "" if is_shared else "")
         # checkBox_display_comment_download checked routes pushButton_get_video
         # through the "commented" render path, which works off the sequence
         # (extractable for any entry) rather than needing a real local video
