@@ -383,6 +383,13 @@
          </item>
          <item row="3" column="0">
           <widget class="QTableWidget" name="tableWidget_playblast_library">
+           <property name="font">
+            <font>
+             <pointsize>10</pointsize>
+             <weight>75</weight>
+             <bold>true</bold>
+            </font>
+           </property>
            <property name="showGrid">
             <bool>false</bool>
            </property>
