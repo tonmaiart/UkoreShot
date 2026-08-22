@@ -364,42 +364,6 @@
          <item row="4" column="0">
           <layout class="QHBoxLayout" name="horizontalLayout_3">
            <item>
-            <widget class="QPushButton" name="pushButton_sort_ascending">
-             <property name="minimumSize">
-              <size>
-               <width>0</width>
-               <height>30</height>
-              </size>
-             </property>
-             <property name="font">
-              <font>
-               <pointsize>10</pointsize>
-              </font>
-             </property>
-             <property name="text">
-              <string>เรียงตามชื่อ</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QPushButton" name="pushButton_sort_newest">
-             <property name="minimumSize">
-              <size>
-               <width>0</width>
-               <height>30</height>
-              </size>
-             </property>
-             <property name="font">
-              <font>
-               <pointsize>10</pointsize>
-              </font>
-             </property>
-             <property name="text">
-              <string>ใหม่ที่สุด</string>
-             </property>
-            </widget>
-           </item>
-           <item>
             <spacer name="horizontalSpacer">
              <property name="orientation">
               <enum>Qt::Horizontal</enum>
@@ -442,19 +406,24 @@
           </widget>
          </item>
          <item row="0" column="0">
-          <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="2,5,3,2">
+          <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="0,5,3,0,0">
            <item>
-            <spacer name="horizontalSpacer_2">
-             <property name="orientation">
-              <enum>Qt::Horizontal</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
+            <widget class="QPushButton" name="pushButton_reload">
+             <property name="minimumSize">
               <size>
-               <width>40</width>
-               <height>20</height>
+               <width>0</width>
+               <height>30</height>
               </size>
              </property>
-            </spacer>
+             <property name="font">
+              <font>
+               <pointsize>10</pointsize>
+              </font>
+             </property>
+             <property name="text">
+              <string>รีโหลดคลัง</string>
+             </property>
+            </widget>
            </item>
            <item>
             <widget class="QLineEdit" name="lineEdit_search_bar">
@@ -493,7 +462,7 @@
             </spacer>
            </item>
            <item>
-            <widget class="QPushButton" name="pushButton_reload">
+            <widget class="QPushButton" name="pushButton_sort_newest">
              <property name="minimumSize">
               <size>
                <width>0</width>
@@ -506,7 +475,25 @@
               </font>
              </property>
              <property name="text">
-              <string>รีโหลดคลัง</string>
+              <string>ใหม่ที่สุด</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="pushButton_sort_ascending">
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>30</height>
+              </size>
+             </property>
+             <property name="font">
+              <font>
+               <pointsize>10</pointsize>
+              </font>
+             </property>
+             <property name="text">
+              <string>เรียงตามชื่อ</string>
              </property>
             </widget>
            </item>
