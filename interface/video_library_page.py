@@ -157,11 +157,14 @@ class UkoreShotPage(QWidget):
     covers it).
 
     Discord support removed entirely 2026-08-21 (standalone tool now) —
-    pushButton_get_video paired with checkBox_display_comment_download
-    replace the old Discord-oriented "get format video"/"auto send to
-    Discord" buttons: generates a local .mp4 (hard-capped at 20MB) into a
-    cache-only export folder that's never touched by cloud sync, and
-    reveal+select it in Explorer — see _on_get_video_clicked below.
+    pushButton_get_video paired with checkBox_display_comment_overlay
+    (originally its own checkBox_display_comment_download, merged into the
+    comment-overlay checkbox 2026-08-22 once that separate checkbox was
+    removed from the .ui) replace the old Discord-oriented "get format
+    video"/"auto send to Discord" buttons: generates a local .mp4
+    (hard-capped at 20MB) into a cache-only export folder that's never
+    touched by cloud sync, and reveal+select it in Explorer — see
+    _on_get_video_clicked below.
     Mark as Share and Copy Share Code were merged into the single
     pushButton_copy_clipboard (2026-08-22, per the user's own request):
     its label/action switch on whether the selected entry is already
@@ -241,10 +244,6 @@ class UkoreShotPage(QWidget):
         # pushButton_copy_clipboard's own label switches.
         self.copy_code_edit: QLineEdit = find(QLineEdit, "lineEdit_copy_code")
         self.get_video_button: QPushButton = find(QPushButton, "pushButton_get_video")
-        # Paired with pushButton_get_video — checked routes the export
-        # through the "commented" (drawings + frame number burned in)
-        # render path instead of the plain one.
-        self.display_comment_download_checkbox: QCheckBox = find(QCheckBox, "checkBox_display_comment_download")
         self.prev_frame_button: QPushButton = find(QPushButton, "pushButton_previous_frame")
         self.play_button: QPushButton = find(QPushButton, "pushButton_play")
         self.next_frame_button: QPushButton = find(QPushButton, "pushButton_next_frame")
@@ -258,7 +257,10 @@ class UkoreShotPage(QWidget):
         # _on_show_comment_toggle/_refresh_frame_strokes below). Was
         # pushButton_show_comment_toggle (a checkable icon button) until
         # 2026-08-22, replaced with this plain checkbox per the user's own
-        # request.
+        # request. Also doubles as pushButton_get_video's own "commented
+        # export" switch (2026-08-22, per the user's own request) since the
+        # separate checkBox_display_comment_download was removed from the
+        # .ui — see _update_button_states/_on_get_video_clicked below.
         self.show_comment_checkbox: QCheckBox = find(QCheckBox, "checkBox_display_comment_overlay")
         # "Current Keyframe Comment" box — always shows whichever comment
         # text is saved on the frame currently on screen, independent of
@@ -286,7 +288,6 @@ class UkoreShotPage(QWidget):
             ("pushButton_copy_clipboard", self.copy_clipboard_button),
             ("lineEdit_copy_code", self.copy_code_edit),
             ("pushButton_get_video", self.get_video_button),
-            ("checkBox_display_comment_download", self.display_comment_download_checkbox),
             ("pushButton_previous_frame", self.prev_frame_button),
             ("pushButton_play", self.play_button),
             ("pushButton_next_frame", self.next_frame_button),
@@ -372,11 +373,6 @@ class UkoreShotPage(QWidget):
         self.copy_clipboard_button.clicked.connect(self._on_copy_clipboard_clicked)
         self.get_video_button.clicked.connect(self._on_get_video_clicked)
         self.delete_button.clicked.connect(self._on_delete_playblast_clicked)
-        if self.display_comment_download_checkbox is not None:
-            # Enabled state of pushButton_get_video depends on it (see
-            # _update_button_states) — a video-less, sequence-only entry can
-            # only be exported with the checkbox checked.
-            self.display_comment_download_checkbox.toggled.connect(lambda _checked: self._update_button_states())
         self.copy_clipboard_button.setEnabled(False)
 
         # Shift+A/Shift+D — jump to the previous/next commented keyframe of
@@ -465,6 +461,10 @@ class UkoreShotPage(QWidget):
         self._show_comments = checked
         self.player_widget.set_comments_visible(checked)
         self._refresh_frame_strokes()
+        # pushButton_get_video's enabled state also depends on this checkbox
+        # now (2026-08-22, see _update_button_states) — a video-less,
+        # sequence-only entry can only be exported with it checked.
+        self._update_button_states()
 
     def _refresh_frame_strokes(self) -> None:
         """Feeds player_widget.py's _CommentOverlay whichever frame is
@@ -839,11 +839,14 @@ class UkoreShotPage(QWidget):
         self.copy_clipboard_button.setText("Copy Code" if is_shared else "Make Share")
         if self.copy_code_edit is not None:
             self.copy_code_edit.setText(entry.share_state.get("code") or "" if is_shared else "")
-        # checkBox_display_comment_download checked routes pushButton_get_video
+        # checkBox_display_comment_overlay checked routes pushButton_get_video
         # through the "commented" render path, which works off the sequence
         # (extractable for any entry) rather than needing a real local video
-        # file the way the plain export does.
-        wants_comments = has_selection and self.display_comment_download_checkbox is not None and self.display_comment_download_checkbox.isChecked()
+        # file the way the plain export does — reuses the same checkbox the
+        # player's comment overlay toggle already uses (2026-08-22, per the
+        # user's own request — the separate checkBox_display_comment_download
+        # was removed from the .ui).
+        wants_comments = has_selection and self.show_comment_checkbox is not None and self.show_comment_checkbox.isChecked()
         if wants_comments:
             self.get_video_button.setEnabled(has_selection)
         else:
@@ -1264,10 +1267,13 @@ class UkoreShotPage(QWidget):
 
     def _on_get_video_clicked(self) -> None:
         """pushButton_get_video — routes to the plain or "commented" export
-        depending on checkBox_display_comment_download (2026-08-22, per the
+        depending on checkBox_display_comment_overlay (2026-08-22, per the
         user's own request to merge the old separate Get Video/Get Video -
-        Commented buttons behind this one checkbox)."""
-        if self.display_comment_download_checkbox is not None and self.display_comment_download_checkbox.isChecked():
+        Commented buttons behind one checkbox — originally its own
+        checkBox_display_comment_download, then reused from
+        checkBox_display_comment_overlay once that separate checkbox was
+        removed from the .ui, same day)."""
+        if self.show_comment_checkbox is not None and self.show_comment_checkbox.isChecked():
             self._export_commented_video()
         else:
             self._export_plain_video()

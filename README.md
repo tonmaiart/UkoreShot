@@ -62,12 +62,18 @@ further detail):
   `_on_copy_clipboard_clicked` dispatches to whichever action applies at
   click time instead of a separate handler wired to a separate button.
   **`pushButton_get_video_commented` was likewise removed and replaced by
-  `checkBox_display_comment_download`, sharing `pushButton_get_video`**
-  (2026-08-22) — checked routes the click through the "commented" render
-  path (composited drawings + frame number, works off the sequence alone)
-  instead of the plain one (needs a real local video file); see
-  `_on_get_video_clicked`'s dispatch to `_export_plain_video`/
-  `_export_commented_video` below. **`tableWidget_playblast_library` also
+  a checkbox sharing `pushButton_get_video`** (2026-08-22) — checked routes
+  the click through the "commented" render path (composited drawings +
+  frame number, works off the sequence alone) instead of the plain one
+  (needs a real local video file); see `_on_get_video_clicked`'s dispatch
+  to `_export_plain_video`/`_export_commented_video` below. Briefly its own
+  separate `checkBox_display_comment_download`, then (same day, once that
+  checkbox was removed from the `.ui`) repointed to reuse
+  `checkBox_display_comment_overlay` instead — the same checkbox that
+  toggles the player's read-only comment overlay (see the
+  `checkBox_display_comment_overlay` paragraph below) now also decides Get
+  Video's export path, so there's only one "show/export comments" switch on
+  the page, not two independent ones that could disagree. **`tableWidget_playblast_library` also
   gained a Share Code column** (2026-08-22) showing each entry's share
   code (blank if unshared), and the wildcard search bar now matches a
   video's share code as well as its stem — so pasting/typing an
@@ -333,10 +339,12 @@ fresh Mark as Share for every comment.
 
 Added 2026-08-21: `pushButton_get_video` in `video_library_page.py`
 generates a fresh, hard-capped-at-20MB `.mp4` on click, routed to either
-export path below depending on `checkBox_display_comment_download`
-(merged from a separate `pushButton_get_video_commented` button
-2026-08-22, see the `interface/` bullet above), then shows a single-button
-"Ok and Show me in explorer"
+export path below depending on `checkBox_display_comment_overlay` (merged
+from a separate `pushButton_get_video_commented` button 2026-08-22 — via
+its own now-removed `checkBox_display_comment_download` first, then
+repointed the same day to reuse `checkBox_display_comment_overlay` once
+that separate checkbox was cut, see the `interface/` bullet above), then
+shows a single-button "Ok and Show me in explorer"
 dialog (`_notify_export_ready`, so Explorer popping open doesn't catch
 anyone off guard) before revealing+selecting it in Windows Explorer
 (`explorer /select,`). Get Video burns the frame number into every frame
