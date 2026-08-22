@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1232</width>
+    <width>2362</width>
     <height>812</height>
    </rect>
   </property>
@@ -226,13 +226,6 @@
                   </size>
                  </property>
                 </spacer>
-               </item>
-               <item>
-                <widget class="QLabel" name="label">
-                 <property name="text">
-                  <string>Boost Volume</string>
-                 </property>
-                </widget>
                </item>
                <item>
                 <widget class="QSlider" name="horizontalSlider_boost_volume">
