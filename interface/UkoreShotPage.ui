@@ -114,6 +114,13 @@
                 <height>30</height>
                </size>
               </property>
+              <property name="font">
+               <font>
+                <pointsize>10</pointsize>
+                <weight>75</weight>
+                <bold>true</bold>
+               </font>
+              </property>
               <property name="readOnly">
                <bool>true</bool>
               </property>
@@ -375,7 +382,7 @@
            <item>
             <widget class="QPushButton" name="pushButton_delete_playblast">
              <property name="text">
-              <string>ลบวิดีโอ</string>
+              <string>ลบประวัติที่เลือก</string>
              </property>
             </widget>
            </item>

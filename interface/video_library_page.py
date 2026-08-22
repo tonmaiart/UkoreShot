@@ -847,18 +847,14 @@ class UkoreShotPage(QWidget):
         self.copy_clipboard_button.setText("Copy Code" if is_shared else "Make Share")
         if self.copy_code_edit is not None:
             self.copy_code_edit.setText(entry.share_state.get("code") or "" if is_shared else "")
-        # checkBox_display_comment_overlay checked routes pushButton_get_video
-        # through the "commented" render path, which works off the sequence
-        # (extractable for any entry) rather than needing a real local video
-        # file the way the plain export does — reuses the same checkbox the
-        # player's comment overlay toggle already uses (2026-08-22, per the
-        # user's own request — the separate checkBox_display_comment_download
-        # was removed from the .ui).
-        wants_comments = has_selection and self.show_comment_checkbox is not None and self.show_comment_checkbox.isChecked()
-        if wants_comments:
-            self.get_video_button.setEnabled(has_selection)
-        else:
-            self.get_video_button.setEnabled(has_selection and entry.video_path is not None)
+        # pushButton_get_video is always enabled for any selection now
+        # (2026-08-22, per the user's own request) — _on_get_video_clicked
+        # itself decides plain vs. commented export, falling back to the
+        # sequence-based "commented" path automatically for an entry with no
+        # local video file, so Download never needs to be disabled for that
+        # reason (only checkBox_display_comment_overlay + the sequence
+        # extraction lazily happening at click time govern which path runs).
+        self.get_video_button.setEnabled(has_selection)
         self.delete_button.setEnabled(bool(self._selected_entries()))
 
     # -- share-code search-bar round-trip -----------------------------------
@@ -1280,8 +1276,16 @@ class UkoreShotPage(QWidget):
         Commented buttons behind one checkbox — originally its own
         checkBox_display_comment_download, then reused from
         checkBox_display_comment_overlay once that separate checkbox was
-        removed from the .ui, same day)."""
-        if self.show_comment_checkbox is not None and self.show_comment_checkbox.isChecked():
+        removed from the .ui, same day). Always enabled for any selection
+        (2026-08-22, per the user's own request) — falls back to the
+        commented/sequence-based path automatically whenever the selected
+        entry has no local video file to compress from (a sequence-only
+        entry, e.g. one that only exists here because it was pulled in via
+        a pasted share code), even with the checkbox unchecked, since the
+        plain path has no source to work from otherwise."""
+        entry = self._entries_by_key.get(self._selected_key) if self._selected_key else None
+        wants_comments = self.show_comment_checkbox is not None and self.show_comment_checkbox.isChecked()
+        if wants_comments or entry is None or entry.video_path is None:
             self._export_commented_video()
         else:
             self._export_plain_video()

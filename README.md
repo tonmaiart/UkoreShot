@@ -73,7 +73,17 @@ further detail):
   toggles the player's read-only comment overlay (see the
   `checkBox_display_comment_overlay` paragraph below) now also decides Get
   Video's export path, so there's only one "show/export comments" switch on
-  the page, not two independent ones that could disagree. **`tableWidget_playblast_library` also
+  the page, not two independent ones that could disagree.
+  **`pushButton_get_video` is always enabled for any selection** (2026-08-22,
+  per the user's own request — it used to disable itself for a
+  sequence-only entry with no local video file whenever the checkbox was
+  unchecked, since the plain export path has nothing to compress from
+  otherwise) — `_on_get_video_clicked` now decides the path itself:
+  commented/sequence-based whenever the checkbox is checked *or* the
+  selected entry simply has no local video file, plain otherwise, so
+  Download never needs disabling for that reason; the checkbox only still
+  matters (to choose commented vs. plain) when a real local video file
+  actually exists. **`tableWidget_playblast_library` also
   gained a Share Code column** (2026-08-22) showing each entry's share
   code (blank if unshared), and the wildcard search bar now matches a
   video's share code as well as its stem — so pasting/typing an
