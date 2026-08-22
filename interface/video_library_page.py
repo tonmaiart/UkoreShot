@@ -63,7 +63,7 @@ _ICONS_DIR = Path(__file__).resolve().parent.parent / "images"
 _SHARE_ICON_PATH = _ICONS_DIR / "share.png"
 _SHARE_ICON_SIZE = QSize(20, 20)
 
-_COL_TIME_AGO, _COL_DATE, _COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_SHARE_CODE = range(6)
+_COL_DATE, _COL_THUMBNAIL, _COL_NAME, _COL_SHARED, _COL_SHARE_CODE = range(5)
 
 _SORT_NAME_ASC = "name_asc"
 _SORT_NEWEST = "newest"
@@ -110,6 +110,21 @@ def _format_time_ago(mtime: float) -> str:
     return "{}mo ago".format(int(delta_seconds // 2592000))
 
 
+_TIME_AGO_CUTOFF_SECONDS = 3 * 86400
+
+
+def _format_date_or_time_ago(mtime: float) -> str:
+    """The Date/Time Ago column's single merged value (2026-08-22, per the
+    user's own request to combine the two columns) — an exact date/time for
+    anything 3 days old or newer, switching to the relative _format_time_ago
+    text automatically once it's older than that, so a stale-looking exact
+    timestamp doesn't linger for months-old playblasts."""
+    delta_seconds = max(0.0, datetime.datetime.now().timestamp() - mtime)
+    if delta_seconds > _TIME_AGO_CUTOFF_SECONDS:
+        return _format_time_ago(mtime)
+    return datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+
+
 def _reveal_and_select_in_explorer(path: Path) -> None:
     """Opens Windows Explorer at path's containing folder with path itself
     already selected/highlighted — /select, does both in one call, so
@@ -140,7 +155,8 @@ class UkoreShotPage(QWidget):
     in the host app — the .ui only supplies layout/widget identity, not
     behavior, same convention those two follow). groupBox_playblast_viewer
     gets a PlayerWidget inserted at runtime; tableWidget_playblast_library
-    (Thumbnail/Name/Shared/Share Code/Date/Time Ago) replaces the old
+    (Date/Thumbnail/Name/Shared/Share Code — Date and Time Ago merged into
+    one column 2026-08-22, see _format_date_or_time_ago) replaces the old
     FlowLayout card grid + FilterSidebar entirely — confirmed with the user
     this round that per-category filtering is retired in favor of just the
     wildcard search bar + sort buttons this .ui actually has. The search bar
@@ -347,8 +363,8 @@ class UkoreShotPage(QWidget):
         self.keyframe_edit.setPlaceholderText("Frame")
         self.keyframe_edit.returnPressed.connect(self._on_keyframe_edit_entered)
 
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["Time Ago", "Date", "", "Name", "Shared", "Share Code"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["Date", "", "Name", "Shared", "Share Code"])
         self.table.setIconSize(_ICON_SIZE)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -364,7 +380,6 @@ class UkoreShotPage(QWidget):
         )
         self.table.verticalHeader().setDefaultSectionSize(_ICON_SIZE.height() + 12)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(_COL_TIME_AGO, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_COL_DATE, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_COL_THUMBNAIL, QHeaderView.Fixed)
         self.table.setColumnWidth(_COL_THUMBNAIL, _ICON_SIZE.width() + 8)
@@ -707,9 +722,7 @@ class UkoreShotPage(QWidget):
         for row, entry in enumerate(entries):
             name_item = QTableWidgetItem(entry.stem)
             name_item.setData(Qt.UserRole, entry.key)
-            self.table.setItem(row, _COL_TIME_AGO, QTableWidgetItem(_format_time_ago(entry.mtime)))
-            date_text = datetime.datetime.fromtimestamp(entry.mtime).strftime("%Y-%m-%d %H:%M")
-            self.table.setItem(row, _COL_DATE, QTableWidgetItem(date_text))
+            self.table.setItem(row, _COL_DATE, QTableWidgetItem(_format_date_or_time_ago(entry.mtime)))
             self.table.setItem(row, _COL_THUMBNAIL, QTableWidgetItem())
             self.table.setItem(row, _COL_NAME, name_item)
             self.table.setItem(row, _COL_SHARED, QTableWidgetItem())

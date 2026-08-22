@@ -91,10 +91,16 @@ further detail):
   Enter/a cloud round-trip (typing a code that isn't local yet still goes
   through `_on_search_enter`'s existing pull-by-code path on Enter).
   **`tableWidget_playblast_library`'s Time Ago/Date columns were moved to
-  the front of the table** (2026-08-22, per the user's own request) —
-  `_COL_TIME_AGO`/`_COL_DATE` now come before `_COL_THUMBNAIL`/`_COL_NAME`/
-  `_COL_SHARED`/`_COL_SHARE_CODE`; every other reference to a column is
-  symbolic (via these `_COL_*` constants), so nothing else needed to change.
+  the front of the table** (2026-08-22, per the user's own request), **then
+  merged into one column** the same day (also per the user's own request) —
+  `_COL_DATE` now comes before `_COL_THUMBNAIL`/`_COL_NAME`/`_COL_SHARED`/
+  `_COL_SHARE_CODE`, and holds `_format_date_or_time_ago`'s single combined
+  value instead of two separate ones: an exact `YYYY-MM-DD HH:MM` for
+  anything 3 days old or newer, automatically switching to the relative
+  `_format_time_ago` text (`"2h ago"`, `"5d ago"`, `"2mo ago"`, …) once it's
+  older than that (`_TIME_AGO_CUTOFF_SECONDS`). Every other reference to a
+  column is symbolic (via these `_COL_*` constants), so nothing else needed
+  to change.
   **`lineEdit_copy_code`** (read-only, added to `UkoreShotPage.ui` 2026-08-22)
   shows the selected entry's share code (blank if unshared), kept in sync
   in `_update_button_states` alongside `pushButton_copy_clipboard`'s own
