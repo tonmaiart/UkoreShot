@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>2362</width>
-    <height>812</height>
+    <width>2081</width>
+    <height>840</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -228,19 +228,6 @@
                 </spacer>
                </item>
                <item>
-                <widget class="QSlider" name="horizontalSlider_boost_volume">
-                 <property name="minimum">
-                  <number>100</number>
-                 </property>
-                 <property name="maximum">
-                  <number>300</number>
-                 </property>
-                 <property name="orientation">
-                  <enum>Qt::Horizontal</enum>
-                 </property>
-                </widget>
-               </item>
-               <item>
                 <widget class="QPushButton" name="pushButton_previous_comment">
                  <property name="minimumSize">
                   <size>
@@ -455,7 +442,7 @@
           </widget>
          </item>
          <item row="0" column="0">
-          <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="7,3">
+          <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="9,1">
            <item>
             <spacer name="horizontalSpacer_6">
              <property name="orientation">
